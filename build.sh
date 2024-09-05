@@ -4,6 +4,7 @@ podman manifest create ocfl-tools-image
 # build with buildx
 podman buildx build --platform linux/arm64,linux/amd64  \
 	-t srerickson/ocfl-tools:latest \
+	--format docker \
 	--manifest ocfl-tools-image .
 
 # push to docker

@@ -1,13 +1,13 @@
 module github.com/srerickson/ocfl-tools
 
-go 1.23.1
+go 1.23.0
 
 require (
 	github.com/alecthomas/kong v0.9.0
 	github.com/aws/aws-sdk-go-v2/config v1.27.33
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.61.2
 	github.com/carlmjohnson/be v0.23.2
-	github.com/srerickson/ocfl-go v0.1.0
+	github.com/srerickson/ocfl-go v0.2.0
 	golang.org/x/exp v0.0.0-20240904232852-e7e105dedf7e
 )
 

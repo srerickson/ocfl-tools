@@ -23,17 +23,14 @@ func (cmd *initRootCmd) Run(ctx context.Context, fsysConfig string, stdout, stde
 		return err
 	}
 	spec := ocfl.Spec(cmd.Spec)
-	layout, err := extension.Get(cmd.Layout)
+	reg := extension.DefaultRegister()
+	layout, err := reg.NewLayout(cmd.Layout)
 	if err != nil {
-		return fmt.Errorf("%q: %w", cmd.Layout, err)
-	}
-	_, isLayout := layout.(extension.Layout)
-	if !isLayout {
-		return fmt.Errorf("%s: %w", cmd.Layout, extension.ErrNotLayout)
+		return fmt.Errorf("could not initialize storage root: %w", err)
 	}
 	root, err := ocfl.NewRoot(ctx, fsys, dir, ocfl.InitRoot(spec, cmd.Description, layout))
 	if err != nil {
-		return fmt.Errorf("failed to initialize new root at %s: $w", err)
+		return fmt.Errorf("while initializing storage root: %w", err)
 	}
 	rootCfg := rootConfig(fsys, dir)
 	fmt.Fprintln(stdout, "storage root:", rootCfg)
