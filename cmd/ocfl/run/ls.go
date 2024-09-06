@@ -2,9 +2,11 @@ package run
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 
 	"github.com/srerickson/ocfl-go"
 )
@@ -17,7 +19,10 @@ type lsCmd struct {
 	WithDigests bool   `name:"digests" short:"d" help:"Show digests when listing contents of an object version."`
 }
 
-func (cmd *lsCmd) Run(ctx context.Context, root *ocfl.Root, stdout, stderr io.Writer) error {
+func (cmd *lsCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger) error {
+	if root == nil {
+		return errors.New("storage root not set")
+	}
 	if cmd.ID == "" {
 		// list object ids in root
 		for obj, err := range root.Objects(ctx) {

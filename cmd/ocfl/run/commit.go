@@ -2,8 +2,10 @@ package run
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/srerickson/ocfl-go"
 )
@@ -20,7 +22,10 @@ type commitCmd struct {
 	Path    string `arg:"" name:"path" help:"local directory with object state to commit"`
 }
 
-func (cmd *commitCmd) Run(ctx context.Context, root *ocfl.Root, stdout, stderr io.Writer) error {
+func (cmd *commitCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger) error {
+	if root == nil {
+		return errors.New("storage root not set")
+	}
 	readFS := ocfl.DirFS(cmd.Path)
 	obj, err := root.NewObject(ctx, cmd.ID)
 	if err != nil {

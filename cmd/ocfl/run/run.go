@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -14,46 +15,29 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/aws/aws-sdk-go-v2/config"
 	awsS3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/charmbracelet/log"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/local"
 	"github.com/srerickson/ocfl-go/backend/s3"
-	"github.com/srerickson/ocfl-go/logging"
 	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
 var (
 	Version   string // set by -ldflags
 	BuildTime string // set by -ldflags
-
-	codeRev = func() string {
-		if info, ok := debug.ReadBuildInfo(); ok {
-			revision := ""
-			localmods := false
-			for _, setting := range info.Settings {
-				switch setting.Key {
-				case "vcs.revision":
-					revision = setting.Value
-				case "vcs.modified":
-					localmods = setting.Value == "true"
-				}
-			}
-			if !localmods {
-				return revision
-			}
-		}
-		return ""
-	}()
 )
 
 var cli struct {
-	RootConfig string      `name:"root" short:"r" env:"OCFL_ROOT" help:"The prefix/directory of the OCFL storage root used for the command"`
-	InitRoot   initRootCmd `cmd:"init-root" help:"${init_root_help}"`
-	Commit     commitCmd   `cmd:"commit" help:"${commit_help}"`
-	LS         lsCmd       `cmd:"ls" help:"${ls_help}"`
-	Export     exportCmd   `cmd:"export" help:"${export_help}"`
-	Diff       DiffCmd     `cmd:"diff" help:"${diff_help}"`
+	RootConfig string `name:"root" short:"r" env:"OCFL_ROOT" help:"The prefix/directory of the OCFL storage root used for the command"`
+	Debug      bool   `name:"debug" help:"enable debug log messages"`
 
-	Version struct{} `cmd:"version" help:"print ocfl-tools version"`
+	InitRoot initRootCmd `cmd:"init-root" help:"${init_root_help}"`
+	Commit   commitCmd   `cmd:"commit" help:"${commit_help}"`
+	LS       lsCmd       `cmd:"ls" help:"${ls_help}"`
+	Export   exportCmd   `cmd:"export" help:"${export_help}"`
+	Diff     DiffCmd     `cmd:"diff" help:"${diff_help}"`
+	Validate ValidateCmd `cmd:"validate" help:"${validate_help}"`
+	Version  struct{}    `cmd:"version" help:"Print ocfl-tools version"`
 }
 
 func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -67,6 +51,7 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			"export_help":    exportHelp,
 			"init_root_help": initRootHelp,
 			"ls_help":        lsHelp,
+			"validate_help":  validateHelp,
 		},
 		kong.ConfigureHelp(kong.HelpOptions{
 			Summary: true,
@@ -86,25 +71,26 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		return err
 	}
-	// run a command on a non-existing root
+	logLevel := log.WarnLevel
+	if cli.Debug {
+		logLevel = log.DebugLevel
+	}
+	logger := newLogger(logLevel, stderr)
+	// commands that don't require an existing root
 	switch kongCtx.Command() {
 	case "init-root":
-		if err := cli.InitRoot.Run(ctx, cli.RootConfig, stdout, stderr); err != nil {
-			fmt.Fprintln(stderr, err)
+		if err := cli.InitRoot.Run(ctx, cli.RootConfig, stdout, logger); err != nil {
+			logger.Error(err.Error())
 			return err
 		}
 		return nil
 	case "version":
-		fmt.Fprintf(stdout, "ocfl v%s, built: %s", Version, BuildTime)
-		if codeRev != "" {
-			fmt.Fprintf(stdout, ", commit: [%s]", codeRev[:8])
-		}
-		fmt.Fprintln(stdout)
+		printVersion(stdout)
 		return nil
 	}
 	// run a command on existing root
 	var runner interface {
-		Run(ctx context.Context, root *ocfl.Root, stdout, stderr io.Writer) error
+		Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger) error
 	}
 	switch kongCtx.Command() {
 	case "commit <path>":
@@ -115,35 +101,43 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		runner = &cli.Export
 	case "diff":
 		runner = &cli.Diff
+	case "validate":
+		runner = &cli.Validate
 	default:
 		kongCtx.PrintUsage(true)
 		err = fmt.Errorf("unknown command: %s", kongCtx.Command())
-		fmt.Fprintln(stderr, err.Error())
+		logger.Error(err.Error())
 		return err
 	}
-	fsys, dir, err := parseRootConfig(ctx, cli.RootConfig)
+	var root *ocfl.Root
+	fsys, dir, err := parseLocation(ctx, cli.RootConfig, logger)
 	if err != nil {
-		fmt.Fprintln(stderr, "error in OCFL root configuration:", err.Error())
+		logger.Error("parsing OCFL root path: " + err.Error())
 		return err
 	}
-	root, err := ocfl.NewRoot(ctx, fsys, dir)
-	if err != nil {
-		rootcnf := rootConfig(fsys, dir)
-		fmt.Fprintln(stderr, "error reading OCFL storage root:", rootcnf+":", err.Error())
-		return err
+	if fsys != nil {
+		root, err = ocfl.NewRoot(ctx, fsys, dir)
+		if err != nil {
+			rootcnf := locationString(fsys, dir)
+			logger.Error("reading OCFL storage root: " + rootcnf + ": " + err.Error())
+			return err
+		}
 	}
-	if err := runner.Run(ctx, root, stdout, stderr); err != nil {
-		fmt.Fprintln(stderr, err.Error())
+	// root may be nil
+	if err := runner.Run(ctx, root, stdout, logger); err != nil {
+		logger.Error(err.Error())
 		return err
 	}
 	return nil
 }
 
-func parseRootConfig(ctx context.Context, name string) (ocfl.WriteFS, string, error) {
-	if name == "" {
-		return nil, "", fmt.Errorf("the storage root location was not given")
+// convert a location, which may be a local path or an 's3://' path, into
+// an FS and a path.
+func parseLocation(ctx context.Context, location string, logger *slog.Logger) (ocfl.WriteFS, string, error) {
+	if location == "" {
+		return nil, "", nil
 	}
-	rl, err := url.Parse(name)
+	rl, err := url.Parse(location)
 	if err != nil {
 		return nil, "", err
 	}
@@ -156,11 +150,11 @@ func parseRootConfig(ctx context.Context, name string) (ocfl.WriteFS, string, er
 		fsys := &s3.BucketFS{
 			S3:     awsS3.NewFromConfig(cfg),
 			Bucket: rl.Host,
-			Logger: logging.DefaultLogger(),
+			Logger: logger,
 		}
 		return fsys, strings.TrimPrefix(rl.Path, "/"), nil
 	default:
-		absPath, err := filepath.Abs(name)
+		absPath, err := filepath.Abs(location)
 		if err != nil {
 			return nil, "", err
 		}
@@ -172,13 +166,50 @@ func parseRootConfig(ctx context.Context, name string) (ocfl.WriteFS, string, er
 	}
 }
 
-func rootConfig(fsys ocfl.WriteFS, dir string) string {
+func locationString(fsys ocfl.WriteFS, dir string) string {
 	switch fsys := fsys.(type) {
 	case *s3.BucketFS:
 		return "s3://" + path.Join(fsys.Bucket, dir)
 	case *local.FS:
-		return fsys.Root()
+		localDir, err := filepath.Localize(dir)
+		if err != nil {
+			panic(err)
+		}
+		return filepath.Join(fsys.Root(), localDir)
 	default:
 		panic(errors.New("unsupported backend type"))
 	}
+}
+
+func codeRev() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		revision := ""
+		localmods := false
+		for _, setting := range info.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				revision = setting.Value
+			case "vcs.modified":
+				localmods = setting.Value == "true"
+			}
+		}
+		if !localmods {
+			return revision
+		}
+	}
+	return ""
+}
+
+func printVersion(stdout io.Writer) {
+	fmt.Fprintf(stdout, "ocfl v%s, built: %s", Version, BuildTime)
+	if rev := codeRev(); rev != "" {
+		fmt.Fprintf(stdout, ", commit: [%s]", rev[:8])
+	}
+	fmt.Fprintln(stdout)
+}
+
+func newLogger(l log.Level, w io.Writer) *slog.Logger {
+	handl := log.New(w)
+	handl.SetLevel(l)
+	return slog.New(handl)
 }
