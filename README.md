@@ -12,6 +12,7 @@ tools for working with OCFL repositories
 Flags:
   -h, --help           Show context-sensitive help.
   -r, --root=STRING    The prefix/directory of the OCFL storage root used for the command ($OCFL_ROOT)
+      --debug          enable debug log messages
 
 Commands:
   init-root    Create a new OCFL storage root
@@ -19,6 +20,8 @@ Commands:
   ls           List objects in a storage root or contents of an object version
   export       Export object contents to the local filesystem
   diff         Show changed files between versions of an object
+  validate     Validate an object or an entire storage root
+  version      Print ocfl-tools version information
 
 Run "ocfl <command> --help" for more information on a command.
 ```

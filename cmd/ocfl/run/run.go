@@ -37,7 +37,7 @@ var cli struct {
 	Export   exportCmd   `cmd:"export" help:"${export_help}"`
 	Diff     DiffCmd     `cmd:"diff" help:"${diff_help}"`
 	Validate ValidateCmd `cmd:"validate" help:"${validate_help}"`
-	Version  struct{}    `cmd:"version" help:"Print ocfl-tools version"`
+	Version  struct{}    `cmd:"version" help:"Print ocfl-tools version information"`
 }
 
 func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
