@@ -22,19 +22,17 @@ import (
 )
 
 var (
-	Version   string
-	BuildTime string
-	codeRev   = func() string {
+	Version   string // set by -ldflags
+	BuildTime string // set by -ldflags
+
+	codeRev = func() string {
 		if info, ok := debug.ReadBuildInfo(); ok {
 			revision := ""
-			// revtime := ""
 			localmods := false
 			for _, setting := range info.Settings {
 				switch setting.Key {
 				case "vcs.revision":
 					revision = setting.Value
-				// case "vcs.time":
-				// 	revtime = setting.Value
 				case "vcs.modified":
 					localmods = setting.Value == "true"
 				}
@@ -97,7 +95,7 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		return nil
 	case "version":
-		fmt.Fprintln(stdout, "ocfl v"+Version, "("+BuildTime+")")
+		fmt.Fprintf(stdout, "ocfl v%s, commit: [%s], built on: %s\n", Version, BuildTime, codeRev)
 		if codeRev != "" {
 			fmt.Fprintln(stdout, "commit:", codeRev[:8])
 		}
