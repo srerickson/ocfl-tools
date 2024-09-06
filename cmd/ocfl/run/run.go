@@ -201,7 +201,7 @@ func codeRev() string {
 }
 
 func printVersion(stdout io.Writer) {
-	fmt.Fprintf(stdout, "ocfl v%s, built: %s", Version, BuildTime)
+	fmt.Fprintf(stdout, "ocfl %s, built: %s", Version, BuildTime)
 	if rev := codeRev(); rev != "" {
 		fmt.Fprintf(stdout, ", commit: [%s]", rev[:8])
 	}
