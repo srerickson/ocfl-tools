@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -24,7 +25,10 @@ type exportCmd struct {
 	To       string   `name:"to" short:"t" default:"." help:"The destination directory for writing exported content. For single file exports, use '-' to print file to STDOUT or a file name."`
 }
 
-func (cmd *exportCmd) Run(ctx context.Context, root *ocfl.Root, stdout, stderr io.Writer) error {
+func (cmd *exportCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger) error {
+	if root == nil {
+		return errors.New("storage root not set")
+	}
 	// list contents of an object
 	obj, err := root.NewObject(ctx, cmd.ID)
 	if err != nil {

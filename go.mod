@@ -7,6 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.27.33
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.61.2
 	github.com/carlmjohnson/be v0.23.2
+	github.com/charmbracelet/log v0.4.0
 	github.com/srerickson/ocfl-go v0.2.0
 	golang.org/x/exp v0.0.0-20240904232852-e7e105dedf7e
 )
@@ -29,8 +30,17 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.26.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.30.7 // indirect
 	github.com/aws/smithy-go v1.20.4 // indirect
+	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
+	github.com/charmbracelet/lipgloss v0.13.0 // indirect
+	github.com/charmbracelet/x/ansi v0.2.3 // indirect
+	github.com/go-logfmt/logfmt v0.6.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
+	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-runewidth v0.0.16 // indirect
+	github.com/muesli/termenv v0.15.2 // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
 	golang.org/x/crypto v0.27.0 // indirect
 	golang.org/x/sync v0.8.0 // indirect
 	golang.org/x/sys v0.25.0 // indirect

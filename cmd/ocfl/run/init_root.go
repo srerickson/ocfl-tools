@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/extension"
@@ -17,8 +18,8 @@ type initRootCmd struct {
 	Spec        string `name:"ocflv" default:"1.1" help:"OCFL version for the storage root"`
 }
 
-func (cmd *initRootCmd) Run(ctx context.Context, fsysConfig string, stdout, stderr io.Writer) error {
-	fsys, dir, err := parseRootConfig(ctx, fsysConfig)
+func (cmd *initRootCmd) Run(ctx context.Context, fsysConfig string, stdout io.Writer, logger *slog.Logger) error {
+	fsys, dir, err := parseLocation(ctx, fsysConfig, logger)
 	if err != nil {
 		return err
 	}
@@ -32,7 +33,7 @@ func (cmd *initRootCmd) Run(ctx context.Context, fsysConfig string, stdout, stde
 	if err != nil {
 		return fmt.Errorf("while initializing storage root: %w", err)
 	}
-	rootCfg := rootConfig(fsys, dir)
+	rootCfg := locationString(fsys, dir)
 	fmt.Fprintln(stdout, "storage root:", rootCfg)
 	if l := root.LayoutName(); l != "" {
 		fmt.Fprintln(stdout, "layout:", root.LayoutName())
