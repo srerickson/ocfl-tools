@@ -34,14 +34,15 @@ func (cmd *ValidateCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writ
 		return errors.New("storage root not set")
 	}
 	if cmd.ID != "" {
-		// validate full storage root
-		return errors.New("full storage root validation not implemented")
+		obj, err := root.NewObject(ctx, cmd.ID)
+		if err != nil {
+			return fmt.Errorf("reading object id: %q: %w", cmd.ID, err)
+		}
+		return cmd.validateObject(ctx, obj, logger.With("object_id", cmd.ID))
 	}
-	obj, err := root.NewObject(ctx, cmd.ID)
-	if err != nil {
-		return fmt.Errorf("reading object id: %q: %w", cmd.ID, err)
-	}
-	return cmd.validateObject(ctx, obj, logger.With("object_id", cmd.ID))
+	// validate full storage root
+	return errors.New("full storage root validation not implemented")
+
 }
 
 func (cmd *ValidateCmd) validateObject(ctx context.Context, obj *ocfl.Object, logger *slog.Logger) error {
