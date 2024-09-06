@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"path"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 
 	"github.com/alecthomas/kong"
@@ -20,6 +21,30 @@ import (
 	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
+var (
+	Version   string // set by -ldflags
+	BuildTime string // set by -ldflags
+
+	codeRev = func() string {
+		if info, ok := debug.ReadBuildInfo(); ok {
+			revision := ""
+			localmods := false
+			for _, setting := range info.Settings {
+				switch setting.Key {
+				case "vcs.revision":
+					revision = setting.Value
+				case "vcs.modified":
+					localmods = setting.Value == "true"
+				}
+			}
+			if !localmods {
+				return revision
+			}
+		}
+		return ""
+	}()
+)
+
 var cli struct {
 	RootConfig string      `name:"root" short:"r" env:"OCFL_ROOT" help:"The prefix/directory of the OCFL storage root used for the command"`
 	InitRoot   initRootCmd `cmd:"init-root" help:"${init_root_help}"`
@@ -27,6 +52,8 @@ var cli struct {
 	LS         lsCmd       `cmd:"ls" help:"${ls_help}"`
 	Export     exportCmd   `cmd:"export" help:"${export_help}"`
 	Diff       DiffCmd     `cmd:"diff" help:"${diff_help}"`
+
+	Version struct{} `cmd:"version" help:"print ocfl-tools version"`
 }
 
 func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -60,11 +87,19 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	// run a command on a non-existing root
-	if kongCtx.Command() == "init-root" {
+	switch kongCtx.Command() {
+	case "init-root":
 		if err := cli.InitRoot.Run(ctx, cli.RootConfig, stdout, stderr); err != nil {
 			fmt.Fprintln(stderr, err)
 			return err
 		}
+		return nil
+	case "version":
+		fmt.Fprintf(stdout, "ocfl v%s, built: %s", Version, BuildTime)
+		if codeRev != "" {
+			fmt.Fprintf(stdout, ", commit: [%s]", codeRev[:8])
+		}
+		fmt.Fprintln(stdout)
 		return nil
 	}
 	// run a command on existing root

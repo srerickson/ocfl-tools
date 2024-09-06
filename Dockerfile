@@ -5,7 +5,9 @@ COPY . .
 RUN go mod download
 
 ARG TARGETARCH
-RUN GOOS=linux GOARCH=$TARGETARCH go build -o ./ocfl ./cmd/ocfl
+ARG OCFLTOOLS_VERSION
+ARG OCFLTOOLS_BUILDTIME
+RUN GOOS=linux GOARCH=$TARGETARCH go build -ldflags "-X github.com/srerickson/ocfl-tools/cmd/ocfl/run.Version=${OCFLTOOLS_VERSION} -X github.com/srerickson/ocfl-tools/cmd/ocfl/run.BuildTime=${OCFLTOOLS_BUILDTIME}" -o ./ocfl ./cmd/ocfl
 
 FROM ubuntu:latest
 COPY --from=builder /app/ocfl /usr/local/bin/ocfl
