@@ -95,7 +95,7 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		return nil
 	case "version":
-		fmt.Fprintf(stdout, "ocfl v%s, commit: [%s], built on: %s\n", Version, BuildTime, codeRev)
+		fmt.Fprintf(stdout, "ocfl v%s, commit: [%s], built on: %s\n", Version, codeRev, BuildTime)
 		if codeRev != "" {
 			fmt.Fprintln(stdout, "commit:", codeRev[:8])
 		}
