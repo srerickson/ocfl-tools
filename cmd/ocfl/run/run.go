@@ -95,10 +95,11 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		return nil
 	case "version":
-		fmt.Fprintf(stdout, "ocfl v%s, commit: [%s], built on: %s\n", Version, codeRev, BuildTime)
+		fmt.Fprintf(stdout, "ocfl v%s, built: %s", Version, BuildTime)
 		if codeRev != "" {
-			fmt.Fprintln(stdout, "commit:", codeRev[:8])
+			fmt.Fprintf(stdout, ", commit: [%s]", codeRev[:8])
 		}
+		fmt.Fprintln(stdout)
 		return nil
 	}
 	// run a command on existing root
