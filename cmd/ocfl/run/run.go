@@ -14,6 +14,7 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	awsS3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/charmbracelet/log"
 	"github.com/srerickson/ocfl-go"
@@ -22,7 +23,15 @@ import (
 	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
-const envVarRoot = "OCFL_ROOT"
+const (
+	envVarRoot = "OCFL_ROOT"
+
+	// keys that can be used in tests
+	envVarAWSKey      = "AWS_ACCESS_KEY_ID"
+	envVarAWSSecret   = "AWS_SECRET_ACCESS_KEY"
+	envVarAWSEndpoint = "AWS_ENDPOINT_URL"
+	envVarAWSRegion   = "AWS_REGION"
+)
 
 var (
 	Version   string // set by -ldflags
@@ -141,7 +150,7 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 
 // convert a location, which may be a local path or an 's3://' path, into
 // an FS and a path.
-func parseLocation(ctx context.Context, location string, logger *slog.Logger, _ func(string) string) (ocfl.WriteFS, string, error) {
+func parseLocation(ctx context.Context, location string, logger *slog.Logger, getenv func(string) string) (ocfl.WriteFS, string, error) {
 	if location == "" {
 		return nil, "", nil
 	}
@@ -151,12 +160,26 @@ func parseLocation(ctx context.Context, location string, logger *slog.Logger, _ 
 	}
 	switch rl.Scheme {
 	case "s3":
-		cfg, err := config.LoadDefaultConfig(ctx)
+		var loadOpts []func(*config.LoadOptions) error
+		if secret := getenv(envVarAWSSecret); secret != "" {
+			key := getenv(envVarAWSKey)
+			creds := credentials.NewStaticCredentialsProvider(key, secret, "")
+			loadOpts = append(loadOpts, config.WithCredentialsProvider(creds))
+		}
+		if region := getenv(envVarAWSRegion); region != "" {
+			loadOpts = append(loadOpts, config.WithRegion(region))
+		}
+		cfg, err := config.LoadDefaultConfig(ctx, loadOpts...)
 		if err != nil {
 			return nil, "", err
 		}
+		var s3Opts []func(*awsS3.Options)
+		// if endpoint := getenv(envVarAWSEndpoint); endpoint != "" {
+		// 	s3Opts = append(s3Opts, awsS3.WithEndpointResolverV2())
+		// }
+		//awsS3.EndpointResolverFromURL("")
 		fsys := &s3.BucketFS{
-			S3:     awsS3.NewFromConfig(cfg),
+			S3:     awsS3.NewFromConfig(cfg, s3Opts...),
 			Bucket: rl.Host,
 			Logger: logger,
 		}
