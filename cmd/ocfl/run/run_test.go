@@ -21,12 +21,12 @@ var (
 	}
 )
 
-func testRun(args []string, expect func(err error, stdout, stderr string)) {
+func testRun(args []string, env map[string]string, expect func(err error, stdout, stderr string)) {
 	ctx := context.Background()
 	stdout := &strings.Builder{}
 	stderr := &strings.Builder{}
 	args = append([]string{"ocfl"}, args...)
-	err := run.CLI(ctx, args, stdout, stderr)
+	err := run.CLI(ctx, args, stdout, stderr, func(key string) string { return env[key] })
 	expect(err, stdout.String(), stderr.String())
 }
 
@@ -34,14 +34,14 @@ func TestAllLayouts(t *testing.T) {
 	for _, l := range allLayouts {
 		t.Run(l, func(t *testing.T) {
 			tmpDir := t.TempDir()
+			env := map[string]string{"OCFL_ROOT": tmpDir}
 			rootDesc := "test description"
 			args := []string{
 				"init-root",
 				"--description", rootDesc,
-				"--root", tmpDir,
 				"--layout", l,
 			}
-			testRun(args, func(err error, stdout string, stderr string) {
+			testRun(args, env, func(err error, stdout string, stderr string) {
 				be.NilErr(t, err)
 				be.True(t, strings.Contains(stdout, tmpDir))
 				be.True(t, strings.Contains(stdout, l))
@@ -52,22 +52,20 @@ func TestAllLayouts(t *testing.T) {
 			args = []string{
 				"commit",
 				contentFixture,
-				"--root", tmpDir,
 				"--id", objID,
 				"--message", "my message",
 				"--name", "Me",
 				"--email", "me@domain.net",
 			}
-			testRun(args, func(err error, _ string, _ string) {
+			testRun(args, env, func(err error, _ string, _ string) {
 				be.NilErr(t, err)
 			})
 			// ocfl ls
 			args = []string{
 				"ls",
-				"--root", tmpDir,
 				"--id", objID,
 			}
-			testRun(args, func(err error, stdout string, _ string) {
+			testRun(args, env, func(err error, stdout string, _ string) {
 				be.NilErr(t, err)
 				be.True(t, strings.Contains(stdout, "hello.csv"))
 				be.True(t, strings.Contains(stdout, "folder1/file.txt"))

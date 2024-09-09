@@ -22,13 +22,15 @@ import (
 	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
+const envVarRoot = "OCFL_ROOT"
+
 var (
 	Version   string // set by -ldflags
 	BuildTime string // set by -ldflags
 )
 
 var cli struct {
-	RootConfig string `name:"root" short:"r" env:"OCFL_ROOT" help:"The prefix/directory of the OCFL storage root used for the command"`
+	RootConfig string `name:"root" short:"r" help:"The prefix/directory of the OCFL storage root used for the command ($$${env_root})"`
 	Debug      bool   `name:"debug" help:"enable debug log messages"`
 
 	InitRoot initRootCmd `cmd:"init-root" help:"${init_root_help}"`
@@ -40,7 +42,7 @@ var cli struct {
 	Version  struct{}    `cmd:"version" help:"Print ocfl-tools version information"`
 }
 
-func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+func CLI(ctx context.Context, args []string, stdout, stderr io.Writer, getenv func(string) string) error {
 	ocflv1.Enable() // hopefuly this won't be necessary in the near future.
 	parser, err := kong.New(&cli, kong.Name("ocfl"),
 		kong.Writers(stdout, stderr),
@@ -52,6 +54,7 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			"init_root_help": initRootHelp,
 			"ls_help":        lsHelp,
 			"validate_help":  validateHelp,
+			"env_root":       envVarRoot,
 		},
 		kong.ConfigureHelp(kong.HelpOptions{
 			Summary: true,
@@ -76,10 +79,15 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		logLevel = log.DebugLevel
 	}
 	logger := newLogger(logLevel, stderr)
+	// root config from flag or environment
+	rootConifg := cli.RootConfig
+	if rootConifg == "" {
+		rootConifg = getenv(envVarRoot)
+	}
 	// commands that don't require an existing root
 	switch kongCtx.Command() {
 	case "init-root":
-		if err := cli.InitRoot.Run(ctx, cli.RootConfig, stdout, logger); err != nil {
+		if err := cli.InitRoot.Run(ctx, rootConifg, stdout, logger, getenv); err != nil {
 			logger.Error(err.Error())
 			return err
 		}
@@ -90,7 +98,7 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	// run a command on existing root
 	var runner interface {
-		Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger) error
+		Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger, getenv func(string) string) error
 	}
 	switch kongCtx.Command() {
 	case "commit <path>":
@@ -109,12 +117,12 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		logger.Error(err.Error())
 		return err
 	}
-	var root *ocfl.Root
-	fsys, dir, err := parseLocation(ctx, cli.RootConfig, logger)
+	fsys, dir, err := parseLocation(ctx, rootConifg, logger, getenv)
 	if err != nil {
 		logger.Error("parsing OCFL root path: " + err.Error())
 		return err
 	}
+	var root *ocfl.Root
 	if fsys != nil {
 		root, err = ocfl.NewRoot(ctx, fsys, dir)
 		if err != nil {
@@ -124,7 +132,7 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	}
 	// root may be nil
-	if err := runner.Run(ctx, root, stdout, logger); err != nil {
+	if err := runner.Run(ctx, root, stdout, logger, getenv); err != nil {
 		logger.Error(err.Error())
 		return err
 	}
@@ -133,7 +141,7 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 // convert a location, which may be a local path or an 's3://' path, into
 // an FS and a path.
-func parseLocation(ctx context.Context, location string, logger *slog.Logger) (ocfl.WriteFS, string, error) {
+func parseLocation(ctx context.Context, location string, logger *slog.Logger, _ func(string) string) (ocfl.WriteFS, string, error) {
 	if location == "" {
 		return nil, "", nil
 	}

@@ -25,7 +25,7 @@ type exportCmd struct {
 	To       string   `name:"to" short:"t" default:"." help:"The destination directory for writing exported content. For single file exports, use '-' to print file to STDOUT or a file name."`
 }
 
-func (cmd *exportCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger) error {
+func (cmd *exportCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger, _ func(string) string) error {
 	if root == nil {
 		return errors.New("storage root not set")
 	}
