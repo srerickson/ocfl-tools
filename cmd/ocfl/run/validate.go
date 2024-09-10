@@ -18,9 +18,9 @@ type ValidateCmd struct {
 	SkipDigest bool   `name:"skip-digest" help:"skip digest (checksum) validation"`
 }
 
-func (cmd *ValidateCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger) error {
+func (cmd *ValidateCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger, getenv func(string) string) error {
 	if cmd.ObjPath != "" {
-		fsys, dir, err := parseLocation(ctx, cmd.ObjPath, logger)
+		fsys, dir, err := parseLocation(ctx, cmd.ObjPath, logger, getenv)
 		if err != nil {
 			return fmt.Errorf("in object path: %w", err)
 		}

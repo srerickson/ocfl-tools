@@ -19,7 +19,7 @@ type DiffCmd struct {
 	Vs []int  `name:"versions" short:"v" default:"-1,0" help:"Object versions to compare, separated by commas. 0 refers to HEAD, negative numbers match versions before HEAD."`
 }
 
-func (cmd *DiffCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger) error {
+func (cmd *DiffCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger, _ func(string) string) error {
 	if root == nil {
 		return errors.New("storage root not set")
 	}

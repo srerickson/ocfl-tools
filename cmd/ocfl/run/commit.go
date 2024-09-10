@@ -22,7 +22,7 @@ type commitCmd struct {
 	Path    string `arg:"" name:"path" help:"local directory with object state to commit"`
 }
 
-func (cmd *commitCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger) error {
+func (cmd *commitCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger, _ func(string) string) error {
 	if root == nil {
 		return errors.New("storage root not set")
 	}

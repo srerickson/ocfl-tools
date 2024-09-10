@@ -18,8 +18,8 @@ type initRootCmd struct {
 	Spec        string `name:"ocflv" default:"1.1" help:"OCFL version for the storage root"`
 }
 
-func (cmd *initRootCmd) Run(ctx context.Context, fsysConfig string, stdout io.Writer, logger *slog.Logger) error {
-	fsys, dir, err := parseLocation(ctx, fsysConfig, logger)
+func (cmd *initRootCmd) Run(ctx context.Context, fsysConfig string, stdout io.Writer, logger *slog.Logger, getenv func(string) string) error {
+	fsys, dir, err := parseLocation(ctx, fsysConfig, logger, getenv)
 	if err != nil {
 		return err
 	}

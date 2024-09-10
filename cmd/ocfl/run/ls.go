@@ -19,7 +19,7 @@ type lsCmd struct {
 	WithDigests bool   `name:"digests" short:"d" help:"Show digests when listing contents of an object version."`
 }
 
-func (cmd *lsCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger) error {
+func (cmd *lsCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger, getenv func(string) string) error {
 	if root == nil {
 		return errors.New("storage root not set")
 	}
