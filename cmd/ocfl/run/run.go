@@ -25,7 +25,10 @@ import (
 )
 
 const (
-	envVarRoot = "OCFL_ROOT"
+	envVarRoot        = "OCFL_ROOT"
+	envVarUserName    = "OCFL_USER_NAME"
+	envVarUserEmail   = "OCFL_USER_EMAIL"
+	envVarS3PathStyle = "OCFL_S3_PATHSTYLE"
 
 	// keys that can be used in tests
 	envVarAWSKey      = "AWS_ACCESS_KEY_ID"
@@ -65,6 +68,8 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 			"ls_help":        lsHelp,
 			"validate_help":  validateHelp,
 			"env_root":       envVarRoot,
+			"env_user_name":  envVarUserName,
+			"env_user_email": envVarUserEmail,
 		},
 		kong.ConfigureHelp(kong.HelpOptions{
 			Summary: true,
