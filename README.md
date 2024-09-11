@@ -34,7 +34,7 @@ To access OCFL storage roots on S3, set `--root` or `$OCFL_ROOT` with the bucket
 
 ```sh
 # set root with flag
-ocfl --root="s3://my-bucket/my-root" ls
+ocfl ls --root="s3://my-bucket/my-root"
 
 # OR set root eith environment variable
 export OCFL_ROOT="s3://my-bucket/my-root"
@@ -50,7 +50,7 @@ export AWS_ACCESS_KEY_ID="..."
 export AWS_SECRET_ACCESS_KEY="..."
 ```
 
-[Path-style S3 requests](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html#path-style-access) can be enable by setting `OCLF_S3_PATHSTYLE=true`.
+[Path-style S3 requests](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html#path-style-access) are enabled by setting `OCFL_S3_PATHSTYLE=true`.
 
 ## Installation
 
