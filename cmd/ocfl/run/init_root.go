@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -22,6 +23,9 @@ func (cmd *initRootCmd) Run(ctx context.Context, fsysConfig string, stdout io.Wr
 	fsys, dir, err := parseLocation(ctx, fsysConfig, logger, getenv)
 	if err != nil {
 		return err
+	}
+	if fsys == nil {
+		return errors.New("location for new storage root is required")
 	}
 	spec := ocfl.Spec(cmd.Spec)
 	reg := extension.DefaultRegister()
