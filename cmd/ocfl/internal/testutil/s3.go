@@ -56,6 +56,7 @@ func S3Client(ctx context.Context) (*s3.Client, error) {
 	}
 	cli := s3.NewFromConfig(cnf, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(endpoint)
+		o.UsePathStyle = true
 	})
 	return cli, nil
 }

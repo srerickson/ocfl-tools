@@ -16,19 +16,19 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	awsS3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/charmbracelet/log"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/local"
-	"github.com/srerickson/ocfl-go/backend/s3"
+	ocflS3 "github.com/srerickson/ocfl-go/backend/s3"
 	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
 const (
-	envVarRoot        = "OCFL_ROOT"
-	envVarUserName    = "OCFL_USER_NAME"
-	envVarUserEmail   = "OCFL_USER_EMAIL"
-	envVarS3PathStyle = "OCFL_S3_PATHSTYLE"
+	envVarRoot        = "OCFL_ROOT"         // storage root location string
+	envVarUserName    = "OCFL_USER_NAME"    // user name for commit
+	envVarUserEmail   = "OCFL_USER_EMAIL"   // user email for commit
+	envVarS3PathStyle = "OCFL_S3_PATHSTYLE" // if "true", enable path-style addressing for s3
 
 	// keys that can be used in tests
 	envVarAWSKey      = "AWS_ACCESS_KEY_ID"
@@ -186,14 +186,19 @@ func parseLocation(ctx context.Context, location string, logger *slog.Logger, ge
 		if err != nil {
 			return nil, "", err
 		}
-		var s3Opts []func(*awsS3.Options)
+		var s3Opts []func(*s3.Options)
 		if envEndpoint != "" {
-			s3Opts = append(s3Opts, func(o *awsS3.Options) {
+			s3Opts = append(s3Opts, func(o *s3.Options) {
 				o.BaseEndpoint = aws.String(envEndpoint)
 			})
 		}
-		s3Client := awsS3.NewFromConfig(cfg, s3Opts...)
-		fsys := &s3.BucketFS{S3: s3Client, Bucket: bucket, Logger: logger}
+		if strings.EqualFold(getenv(envVarS3PathStyle), "true") {
+			s3Opts = append(s3Opts, func(o *s3.Options) {
+				o.UsePathStyle = true
+			})
+		}
+		s3Client := s3.NewFromConfig(cfg, s3Opts...)
+		fsys := &ocflS3.BucketFS{S3: s3Client, Bucket: bucket, Logger: logger}
 		return fsys, prefix, nil
 	default:
 		absPath, err := filepath.Abs(location)
@@ -210,7 +215,7 @@ func parseLocation(ctx context.Context, location string, logger *slog.Logger, ge
 
 func locationString(fsys ocfl.WriteFS, dir string) string {
 	switch fsys := fsys.(type) {
-	case *s3.BucketFS:
+	case *ocflS3.BucketFS:
 		return "s3://" + path.Join(fsys.Bucket, dir)
 	case *local.FS:
 		localDir, err := filepath.Localize(dir)

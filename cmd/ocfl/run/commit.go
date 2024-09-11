@@ -17,7 +17,7 @@ type commitCmd struct {
 	Name    string `name:"name" short:"n" help:"Username to include in the object version metadata ($$${env_user_name})"`
 	Email   string `name:"email" short:"e" help:"User email to include in the object version metadata ($$${env_user_email})"`
 	Spec    string `name:"ocflv" default:"1.1" help:"OCFL spec fo the new object"`
-	Alg     string `name:"alg" default:"sha512" help:"Digest Algorithm used to digest content. (Ignored for commits to existing object)"`
+	Alg     string `name:"alg" default:"sha512" help:"Digest Algorithm used to digest content. Ignored for commit to an existing object."`
 	Path    string `arg:"" name:"path" help:"local directory with object state to commit"`
 }
 
