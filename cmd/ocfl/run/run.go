@@ -127,6 +127,7 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 		logger.Error(err.Error())
 		return err
 	}
+	// fsys is nil if rootConfig is empty
 	fsys, dir, err := parseLocation(ctx, rootConifg, logger, getenv)
 	if err != nil {
 		logger.Error("parsing OCFL root path: " + err.Error())

@@ -36,6 +36,16 @@ func runCLI(args []string, env map[string]string, expect func(err error, stdout,
 	expect(err, stdout.String(), stderr.String())
 }
 
+func TestInitRoot(t *testing.T) {
+	t.Run("root not set", func(t *testing.T) {
+		// should return an error
+		args := []string{"init-root"}
+		runCLI(args, nil, func(err error, stdout string, stderr string) {
+			be.True(t, err != nil)
+		})
+	})
+}
+
 func TestAllLayouts(t *testing.T) {
 	testLayout := func(t *testing.T, root string, layout string) {
 		env := map[string]string{"OCFL_ROOT": root}
