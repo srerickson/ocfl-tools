@@ -52,7 +52,7 @@ func (cmd *ValidateCmd) validateObject(ctx context.Context, obj *ocfl.Object, lo
 	if cmd.SkipDigest {
 		opts = append(opts, ocfl.ValidationSkipDigest())
 	}
-	if obj.Validate(ctx, opts...).Err() != nil {
+	if ocfl.ValidateObject(ctx, obj.FS(), obj.Path(), opts...).Err() != nil {
 		return errors.New("object has validation errors")
 	}
 	return nil
