@@ -50,6 +50,7 @@ var cli struct {
 	InitRoot initRootCmd `cmd:"init-root" help:"${init_root_help}"`
 	Commit   commitCmd   `cmd:"commit" help:"${commit_help}"`
 	LS       lsCmd       `cmd:"ls" help:"${ls_help}"`
+	Log      LogCmd      `cmd:"log" help:"${log_help}"`
 	Export   exportCmd   `cmd:"export" help:"${export_help}"`
 	Diff     DiffCmd     `cmd:"diff" help:"${diff_help}"`
 	Validate ValidateCmd `cmd:"validate" help:"${validate_help}"`
@@ -67,6 +68,7 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 			"export_help":    exportHelp,
 			"init_root_help": initRootHelp,
 			"ls_help":        lsHelp,
+			"log_help":       logHelp,
 			"validate_help":  validateHelp,
 			"env_root":       envVarRoot,
 			"env_user_name":  envVarUserName,
@@ -121,6 +123,8 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 		runner = &cli.Commit
 	case "ls":
 		runner = &cli.LS
+	case "log":
+		runner = &cli.Log
 	case "export":
 		runner = &cli.Export
 	case "diff":
