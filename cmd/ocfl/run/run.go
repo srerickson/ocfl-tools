@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -213,7 +214,7 @@ func parseLocation(ctx context.Context, location string, logger *slog.Logger, ge
 	}
 }
 
-func locationString(fsys ocfl.WriteFS, dir string) string {
+func locationString(fsys ocfl.FS, dir string) string {
 	switch fsys := fsys.(type) {
 	case *ocflS3.BucketFS:
 		return "s3://" + path.Join(fsys.Bucket, dir)

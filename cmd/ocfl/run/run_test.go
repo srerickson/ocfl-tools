@@ -17,14 +17,6 @@ var (
 	badObjectFixtures  = filepath.Join(testDataPath, `object-fixtures`, `1.1`, `bad-objects`)
 	goodStoreFixtures  = filepath.Join(testDataPath, `store-fixtures`, `1.0`, `good-stores`)
 	contentFixture     = filepath.Join(testDataPath, `content-fixture`)
-
-	allLayouts = []string{
-		"0002-flat-direct-storage-layout",
-		"0003-hash-and-id-n-tuple-storage-layout",
-		"0004-hashed-n-tuple-storage-layout",
-		// "0006-flat-omit-prefix-storage-layout",
-		"0007-n-tuple-omit-prefix-storage-layout",
-	}
 )
 
 func runCLI(args []string, env map[string]string, expect func(err error, stdout, stderr string)) {
@@ -46,8 +38,32 @@ func runCLI(args []string, env map[string]string, expect func(err error, stdout,
 }
 
 func TestInitRoot(t *testing.T) {
+	t.Run("existing OK", func(t *testing.T) {
+		env := map[string]string{"OCFL_ROOT": t.TempDir()}
+		args := []string{"init-root"}
+		runCLI(args, env, func(err error, stdout string, stderr string) {
+			be.NilErr(t, err) // ok the first time
+		})
+		runCLI(args, env, func(err error, stdout string, stderr string) {
+			be.True(t, err != nil) // error because existing
+			be.True(t, strings.Contains(stderr, "already exists"))
+		})
+		args = []string{"init-root", "--existing-ok"}
+		runCLI(args, env, func(err error, stdout string, stderr string) {
+			be.NilErr(t, err) // no error if --existing-ok
+			be.True(t, strings.Contains(stderr, "already exists"))
+		})
+	})
 	t.Run("all layouts", func(t *testing.T) {
-		testLayout := func(t *testing.T, root string, layout string) {
+		// layout name -> default layout config is valid
+		layouts := map[string]bool{
+			"0002-flat-direct-storage-layout":         true,
+			"0003-hash-and-id-n-tuple-storage-layout": true,
+			"0004-hashed-n-tuple-storage-layout":      true,
+			"0006-flat-omit-prefix-storage-layout":    false,
+			"0007-n-tuple-omit-prefix-storage-layout": true,
+		}
+		testLayout := func(t *testing.T, root string, layout string, defaultOK bool) {
 			env := map[string]string{"OCFL_ROOT": root}
 			rootDesc := "test description"
 			args := []string{
@@ -60,7 +76,16 @@ func TestInitRoot(t *testing.T) {
 				be.True(t, strings.Contains(stdout, root))
 				be.True(t, strings.Contains(stdout, layout))
 				be.True(t, strings.Contains(stdout, rootDesc))
+				if defaultOK {
+					be.True(t, stderr == "")
+				} else {
+					be.True(t, strings.Contains(stderr, "layout has configuration errors"))
+				}
 			})
+			if !defaultOK {
+				// only continue if the layout's default config is OK
+				return
+			}
 			// ocfl commit
 			objID := "object-01"
 			args = []string{
@@ -83,13 +108,13 @@ func TestInitRoot(t *testing.T) {
 				be.NilErr(t, err)
 			})
 		}
-		for _, l := range allLayouts {
+		for l, defaultOK := range layouts {
 			t.Run(l, func(t *testing.T) {
-				testLayout(t, t.TempDir(), l)
+				testLayout(t, t.TempDir(), l, defaultOK)
 				// again with S3 if enabled
 				if testutil.S3Enabled() {
 					t.Run("s3", func(t *testing.T) {
-						testLayout(t, testutil.TempS3Location(t, "new-root"), l)
+						testLayout(t, testutil.TempS3Location(t, "new-root"), l, defaultOK)
 					})
 				}
 			})
