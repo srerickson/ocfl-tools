@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:latest AS builder
+FROM --platform=$BUILDPLATFORM docker.io/golang:latest AS builder
 
 WORKDIR /app
 COPY . .
