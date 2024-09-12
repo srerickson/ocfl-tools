@@ -18,6 +18,7 @@ Commands:
   init-root    Create a new OCFL storage root
   commit       Create or update an object in a storage root
   ls           List objects in a storage root or contents of an object version
+  log          Show an object's revision log
   export       Export object contents to the local filesystem
   diff         Show changed files between versions of an object
   validate     Validate an object or an entire storage root
