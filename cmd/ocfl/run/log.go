@@ -10,7 +10,7 @@ import (
 	"github.com/srerickson/ocfl-go"
 )
 
-const logHelp = "print revision log for an object"
+const logHelp = "Show an object's revision log"
 
 type LogCmd struct {
 	ID      string `name:"id" short:"i" optional:"" help:"The id for object to show revision logs from"`
