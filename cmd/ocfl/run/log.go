@@ -43,7 +43,7 @@ func (cmd *LogCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, l
 func printVersionLog(obj *ocfl.Object, stdout io.Writer) error {
 	inv := obj.Inventory()
 	if inv == nil {
-		return errors.New("object has no inventory!")
+		return errors.New("object has no inventory")
 	}
 	for _, vnum := range inv.Head().Lineage() {
 		version := inv.Version(vnum.Num())

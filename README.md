@@ -21,7 +21,7 @@ Commands:
   log          Show an object's revision log
   export       Export object contents to the local filesystem
   diff         Show changed files between versions of an object
-  validate     Validate an object or an entire storage root
+  validate     Validate an object or all objects in the storage root
   version      Print ocfl-tools version information
 
 Run "ocfl <command> --help" for more information on a command.
@@ -37,7 +37,7 @@ To access OCFL storage roots on S3, set `--root` or `$OCFL_ROOT` with the bucket
 # set root with flag
 ocfl ls --root="s3://my-bucket/my-root"
 
-# OR set root eith environment variable
+# OR set root with environment variable
 export OCFL_ROOT="s3://my-bucket/my-root"
 ocfl ls
 ```

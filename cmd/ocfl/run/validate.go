@@ -10,7 +10,7 @@ import (
 	"github.com/srerickson/ocfl-go"
 )
 
-const validateHelp = "Validate an object (TODO: or an entire storage root)"
+const validateHelp = "Validate an object or all objects in the storage root"
 
 type ValidateCmd struct {
 	ID         string `name:"id" short:"i" optional:"" help:"The id of object to validate"`
@@ -40,9 +40,21 @@ func (cmd *ValidateCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writ
 		}
 		return cmd.validateObject(ctx, obj, logger.With("object_id", cmd.ID))
 	}
-	// validate full storage root
-	return errors.New("full storage root validation not implemented")
-
+	// FIXME
+	logger.Warn("root validation is not fully implemented: validating all objects in the root, but not conformance of root structure itself. [https://github.com/srerickson/ocfl-go/issues/98]")
+	var badObjs []string
+	for obj, err := range root.Objects(ctx) {
+		if err != nil {
+			return fmt.Errorf("finding objects in the storage root: %w", err)
+		}
+		if err := cmd.validateObject(ctx, obj, logger.With("object_path", obj.Path())); err != nil {
+			badObjs = append(badObjs, obj.Path())
+		}
+	}
+	if l := len(badObjs); l > 0 {
+		return fmt.Errorf("found %d invalid object(s) in root", l)
+	}
+	return nil
 }
 
 func (cmd *ValidateCmd) validateObject(ctx context.Context, obj *ocfl.Object, logger *slog.Logger) error {
