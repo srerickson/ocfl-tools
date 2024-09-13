@@ -25,14 +25,20 @@ func TestLog(t *testing.T) {
 		runCLI(args, nil, func(err error, stdout string, stderr string) {
 			be.NilErr(t, err)
 			lines := strings.Split(stdout, "\n")
-			be.True(t, strings.Contains(lines[0], "Initial import"))
-			be.True(t, strings.Contains(lines[1], "Fix bar.xml, remove image.tiff, add empty2.txt"))
-			be.True(t, strings.Contains(lines[2], "Reinstate image.tiff, delete empty.txt"))
+			be.In(t, "Initial import", lines[0])
+			be.In(t, "Fix bar.xml, remove image.tiff, add empty2.txt", lines[1])
+			be.In(t, "Reinstate image.tiff, delete empty.txt", lines[2])
 		})
 	})
 	t.Run("missing args", func(t *testing.T) {
 		runCLI([]string{"log"}, nil, func(err error, stdout string, stderr string) {
 			be.True(t, err != nil)
+			be.In(t, "root not set", stderr)
+		})
+		args := []string{"log", "--root", filepath.Join(goodStoreFixtures, `reg-extension-dir-root`)}
+		runCLI(args, nil, func(err error, stdout string, stderr string) {
+			be.True(t, err != nil)
+			be.In(t, "missing required flag", stderr)
 		})
 	})
 }
