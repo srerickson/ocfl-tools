@@ -49,10 +49,11 @@ var cli struct {
 
 	InitRoot initRootCmd `cmd:"init-root" help:"${init_root_help}"`
 	Commit   commitCmd   `cmd:"commit" help:"${commit_help}"`
-	LS       lsCmd       `cmd:"ls" help:"${ls_help}"`
-	Log      LogCmd      `cmd:"log" help:"${log_help}"`
 	Export   exportCmd   `cmd:"export" help:"${export_help}"`
 	Diff     DiffCmd     `cmd:"diff" help:"${diff_help}"`
+	Info     InfoCmd     `cmd:"info" help:"${info_help}"`
+	LS       lsCmd       `cmd:"ls" help:"${ls_help}"`
+	Log      LogCmd      `cmd:"log" help:"${log_help}"`
 	Validate ValidateCmd `cmd:"validate" help:"${validate_help}"`
 	Version  struct{}    `cmd:"version" help:"Print ocfl-tools version information"`
 }
@@ -66,6 +67,7 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 			"commit_help":    commitHelp,
 			"diff_help":      diffHelp,
 			"export_help":    exportHelp,
+			"info_help":      infoHelp,
 			"init_root_help": initRootHelp,
 			"ls_help":        lsHelp,
 			"log_help":       logHelp,
@@ -131,6 +133,8 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 		runner = &cli.Diff
 	case "validate":
 		runner = &cli.Validate
+	case "info":
+		runner = &cli.Info
 	default:
 		kongCtx.PrintUsage(true)
 		err = fmt.Errorf("unknown command: %s", kongCtx.Command())

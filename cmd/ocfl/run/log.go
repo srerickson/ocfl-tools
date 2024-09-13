@@ -31,13 +31,14 @@ func (cmd *LogCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, l
 		return printVersionLog(obj, stdout)
 	case root == nil:
 		return errors.New("storage root not set")
-	default:
+	case cmd.ID != "":
 		obj, err := root.NewObject(ctx, cmd.ID)
 		if err != nil {
 			return err
 		}
 		return printVersionLog(obj, stdout)
 	}
+	return errors.New("missing required flag: --id or --object")
 }
 
 func printVersionLog(obj *ocfl.Object, stdout io.Writer) error {

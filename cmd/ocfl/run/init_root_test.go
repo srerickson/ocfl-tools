@@ -1,7 +1,6 @@
 package run_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/carlmjohnson/be"
@@ -17,12 +16,13 @@ func TestInitRoot(t *testing.T) {
 		})
 		runCLI(args, env, func(err error, stdout string, stderr string) {
 			be.True(t, err != nil) // error because existing
-			be.True(t, strings.Contains(stderr, "already exists"))
+			be.In(t, `already exists`, stderr)
 		})
 		args = []string{"init-root", "--existing-ok"}
 		runCLI(args, env, func(err error, stdout string, stderr string) {
 			be.NilErr(t, err) // no error if --existing-ok
-			be.True(t, strings.Contains(stderr, "already exists"))
+			be.In(t, `already exists`, stderr)
+
 		})
 	})
 	t.Run("all layouts", func(t *testing.T) {
@@ -44,13 +44,13 @@ func TestInitRoot(t *testing.T) {
 			}
 			runCLI(args, env, func(err error, stdout string, stderr string) {
 				be.NilErr(t, err)
-				be.True(t, strings.Contains(stdout, root))
-				be.True(t, strings.Contains(stdout, layout))
-				be.True(t, strings.Contains(stdout, rootDesc))
+				be.In(t, root, stdout)
+				be.In(t, layout, stdout)
+				be.In(t, rootDesc, stdout)
 				if defaultOK {
 					be.True(t, stderr == "")
 				} else {
-					be.True(t, strings.Contains(stderr, "layout has configuration errors"))
+					be.In(t, "layout has configuration errors", stderr)
 				}
 			})
 			if !defaultOK {

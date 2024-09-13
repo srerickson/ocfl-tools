@@ -17,10 +17,11 @@ Flags:
 Commands:
   init-root    Create a new OCFL storage root
   commit       Create or update an object in a storage root
-  ls           List objects in a storage root or contents of an object version
-  log          Show an object's revision log
   export       Export object contents to the local filesystem
   diff         Show changed files between versions of an object
+  info         Show OCFL-specific information about an object or the active storage root
+  ls           List objects in a storage root or contents of an object version
+  log          Show an object's revision log
   validate     Validate an object or all objects in the storage root
   version      Print ocfl-tools version information
 

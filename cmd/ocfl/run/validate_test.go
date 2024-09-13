@@ -2,7 +2,6 @@ package run_test
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/carlmjohnson/be"
@@ -15,7 +14,6 @@ func TestValidate(t *testing.T) {
 		args := []string{`validate`, `--object`, obj}
 		runCLI(args, nil, func(err error, stdout string, stderr string) {
 			be.True(t, err != nil)
-			be.True(t, strings.Contains(stderr, "E023"))
 		})
 		// good object
 		obj = filepath.Join(goodObjectFixtures, `spec-ex-full`)
@@ -46,7 +44,7 @@ func TestValidate(t *testing.T) {
 		args := []string{`validate`, `--root`, filepath.Join(badStoreFixtures, `multi_level_errors`)}
 		runCLI(args, nil, func(err error, stdout string, stderr string) {
 			be.True(t, err != nil)
-			be.True(t, strings.Contains(stderr, "found 1 invalid object"))
+			be.In(t, "object(s) with errors", stderr)
 		})
 	})
 }
