@@ -11,7 +11,7 @@ import (
 	"github.com/srerickson/ocfl-go"
 )
 
-const lsHelp = "List objects in a storage root or contents of an object version"
+const lsHelp = "List objects in a storage root or files in an object"
 
 type lsCmd struct {
 	ID          string `name:"id" short:"i" optional:"" help:"The id of object to list contents from."`

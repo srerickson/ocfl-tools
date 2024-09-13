@@ -19,8 +19,8 @@ Commands:
   commit       Create or update an object in a storage root
   export       Export object contents to the local filesystem
   diff         Show changed files between versions of an object
-  info         Show OCFL-specific information about an object or the active storage root
-  ls           List objects in a storage root or contents of an object version
+  info         Show information about an object or the active storage root
+  ls           List objects in a storage root or files in an object
   log          Show an object's revision log
   validate     Validate an object or all objects in the storage root
   version      Print ocfl-tools version information
