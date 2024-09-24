@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.61.2
 	github.com/carlmjohnson/be v0.23.2
 	github.com/charmbracelet/log v0.4.0
-	github.com/srerickson/ocfl-go v0.3.1
+	github.com/srerickson/ocfl-go v0.3.2
 	golang.org/x/exp v0.0.0-20240904232852-e7e105dedf7e
 )
 

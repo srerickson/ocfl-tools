@@ -10,10 +10,17 @@ import (
 func TestValidate(t *testing.T) {
 	t.Run("object fixtures", func(t *testing.T) {
 		// bad object
-		obj := filepath.Join(badObjectFixtures, `E023_old_manifest_missing_entries`)
+		obj := filepath.Join(badObjectFixtures, `E010_missing_versions`)
 		args := []string{`validate`, `--object`, obj}
 		runCLI(args, nil, func(err error, stdout string, stderr string) {
 			be.True(t, err != nil)
+			be.In(t, "ocfl_code=E010", stderr)
+		})
+		obj = filepath.Join(badObjectFixtures, `E023_extra_file`)
+		args = []string{`validate`, `--object`, obj}
+		runCLI(args, nil, func(err error, stdout string, stderr string) {
+			be.True(t, err != nil)
+			be.In(t, "ocfl_code=E023", stderr)
 		})
 		// good object
 		obj = filepath.Join(goodObjectFixtures, `spec-ex-full`)
