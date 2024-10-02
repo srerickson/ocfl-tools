@@ -48,7 +48,7 @@ func TempS3Location(t *testing.T, prefix string) string {
 func S3Client(ctx context.Context) (*s3.Client, error) {
 	endpoint := os.Getenv(envS3Endpoint)
 	if endpoint == "" {
-		return nil, errors.New("S3 not enabled in thest test environment: $OCFL_TEST_S3ß not set.")
+		return nil, errors.New("S3 not enabled in thest test environment: $OCFL_TEST_S3 not set")
 	}
 	cnf, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
