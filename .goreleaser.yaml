@@ -14,16 +14,16 @@ before:
     - go mod tidy
 
 builds:
-  - main: ./cmd/ocfl
+  - id: ocfl
+    main: ./cmd/ocfl
     env:
       - CGO_ENABLED=0
-    goos:
-      - linux
-      - windows
-      - darwin
-    # goarch:
-    #   - amd64
-    #   - arm64
+    targets:
+      - linux_amd64_v1
+      - linux_arm64
+      - windows_amd64_v1
+      - darwin_arm64
+
     ldflags:
       - -X github.com/srerickson/ocfl-tools/cmd/ocfl/run.Version={{.Version}} 
       - -X github.com/srerickson/ocfl-tools/cmd/ocfl/run.BuildTime={{.Date}}
