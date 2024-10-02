@@ -260,7 +260,7 @@ func printVersion(stdout io.Writer) {
 	fmt.Fprintln(stdout, "ocfl: v"+Version)
 	fmt.Fprintln(stdout, "date:", BuildTime)
 	if rev := codeRev(); rev != "" {
-		fmt.Fprintln(stdout, ", commit: ", rev[:8])
+		fmt.Fprintln(stdout, "commit: ", rev[:8])
 	}
 }
 
