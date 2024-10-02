@@ -257,11 +257,11 @@ func codeRev() string {
 }
 
 func printVersion(stdout io.Writer) {
-	fmt.Fprintf(stdout, "ocfl %s, built: %s", Version, BuildTime)
+	fmt.Fprintln(stdout, "ocfl: v"+Version)
+	fmt.Fprintln(stdout, "date:", BuildTime)
 	if rev := codeRev(); rev != "" {
-		fmt.Fprintf(stdout, ", commit: [%s]", rev[:8])
+		fmt.Fprintln(stdout, ", commit: ", rev[:8])
 	}
-	fmt.Fprintln(stdout)
 }
 
 func newLogger(l log.Level, w io.Writer) *slog.Logger {
