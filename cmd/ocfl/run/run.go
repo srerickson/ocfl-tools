@@ -55,6 +55,7 @@ var cli struct {
 	LS       lsCmd       `cmd:"ls" help:"${ls_help}"`
 	Log      LogCmd      `cmd:"log" help:"${log_help}"`
 	Validate ValidateCmd `cmd:"validate" help:"${validate_help}"`
+	Stage    stageCmd    `cmd:"digests contents of a directory" help:"${stage_help}"`
 	Version  struct{}    `cmd:"version" help:"Print ocfl-tools version information"`
 }
 
@@ -71,6 +72,7 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 			"init_root_help": initRootHelp,
 			"ls_help":        lsHelp,
 			"log_help":       logHelp,
+			"stage_help":     stageHelp,
 			"validate_help":  validateHelp,
 			"env_root":       envVarRoot,
 			"env_user_name":  envVarUserName,
@@ -108,6 +110,12 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 	switch kongCtx.Command() {
 	case "init-root":
 		if err := cli.InitRoot.Run(ctx, rootConifg, stdout, logger, getenv); err != nil {
+			logger.Error(err.Error())
+			return err
+		}
+		return nil
+	case "stage <path>":
+		if err := cli.Stage.Run(ctx, stdout, logger, getenv); err != nil {
 			logger.Error(err.Error())
 			return err
 		}
