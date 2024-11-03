@@ -53,6 +53,6 @@ func printObjectInfo(obj *ocfl.Object, stdout io.Writer) error {
 	fmt.Fprintln(stdout, "digest algorithm:", inv.DigestAlgorithm())
 	fmt.Fprintln(stdout, "head:", inv.Head())
 	fmt.Fprintln(stdout, "OCFL version:", inv.Spec())
-	fmt.Fprintln(stdout, "inventory.json", inv.DigestAlgorithm()+":", inv.Digest())
+	fmt.Fprintln(stdout, "inventory.json", inv.DigestAlgorithm().ID()+":", inv.Digest())
 	return nil
 }
