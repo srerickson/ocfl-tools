@@ -2,11 +2,9 @@ package run
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
-	"sort"
 
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/ui"
 )
@@ -19,17 +17,17 @@ type stageCmd struct {
 }
 
 func (cmd *stageCmd) Run(ctx context.Context, stdout io.Writer, logger *slog.Logger, getenv func(string) string) error {
-	digests, err := ui.StagingUI(ctx, os.DirFS(cmd.Path), cmd.Alg)
+	_, err := ui.StagingUI(ctx, os.DirFS(cmd.Path), cmd.Alg)
 	if err != nil {
 		return err
 	}
-	sortedPaths := make([]string, 0, len(digests))
-	for p := range digests {
-		sortedPaths = append(sortedPaths, p)
-	}
-	sort.Strings(sortedPaths)
-	for _, p := range sortedPaths {
-		fmt.Println(digests[p], p)
-	}
+	// sortedPaths := make([]string, 0, len(digests))
+	// for p := range digests {
+	// 	sortedPaths = append(sortedPaths, p)
+	// }
+	// sort.Strings(sortedPaths)
+	// for _, p := range sortedPaths {
+	// 	fmt.Println(digests[p], p)
+	// }
 	return nil
 }

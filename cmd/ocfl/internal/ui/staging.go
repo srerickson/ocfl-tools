@@ -2,8 +2,8 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"regexp"
 	"strings"
@@ -14,30 +14,33 @@ import (
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/ui/meter"
 )
 
-func StagingUI(ctx context.Context, fsys fs.FS, alg string, skips ...*regexp.Regexp) (ocfl.PathMap, error) {
-	ui := stagingUI{Alg: alg}
+func StagingUI(ctx context.Context, fsys fs.FS, algID string, skips ...*regexp.Regexp) (ocfl.PathMap, error) {
+	ui := stagingUI{Alg: algID}
 	digests := ocfl.PathMap{}
+	alg, err := digest.DefaultRegistry().Get(algID)
+	if err != nil {
+		return nil, err
+	}
 	run := func(ctx context.Context, msgs chan<- meter.IOMsg) error {
-		var err error
 		fsys = &meter.OnReadFS{FS: fsys, Msgs: msgs}
-		fs.WalkDir(fsys, ".", func(n string, info fs.DirEntry, err error) error {
-			if err != nil || info.Type().IsDir() {
-				return err
-			}
-			f, err := fsys.Open(n)
+		fileIter := func(yield func(string, []digest.Algorithm) bool) {
+			fs.WalkDir(fsys, ".", func(n string, info fs.DirEntry, err error) error {
+				if err != nil || info.Type().IsDir() {
+					return err
+				}
+				if !yield(n, []digest.Algorithm{alg}) {
+					return errors.New("walk interupted")
+				}
+				return nil
+			})
+		}
+		for result, err := range ocfl.Digest(ctx, ocfl.NewFS(fsys), fileIter) {
 			if err != nil {
 				return err
 			}
-			defer f.Close()
-			d, err := digest.DefaultRegistry().NewDigester(alg)
-			if err != nil {
-				return err
-			}
-			_, err = io.Copy(d, f)
-			digests[n] = d.String()
-			return err
-		})
-		return err
+			digests[result.Path] = result.Digests[algID]
+		}
+		return nil
 	}
 	if err := meter.RunProgram(ctx, ui, run); err != nil {
 		return nil, err
