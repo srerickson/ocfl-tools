@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.61.2
 	github.com/carlmjohnson/be v0.23.2
 	github.com/charmbracelet/log v0.4.0
-	github.com/srerickson/ocfl-go v0.3.2
+	github.com/srerickson/ocfl-go v0.4.0
 	golang.org/x/exp v0.0.0-20240904232852-e7e105dedf7e
 )
 
@@ -41,7 +41,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.16 // indirect
 	github.com/muesli/termenv v0.15.2 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	golang.org/x/crypto v0.27.0 // indirect
+	golang.org/x/crypto v0.28.0 // indirect
 	golang.org/x/sync v0.8.0 // indirect
-	golang.org/x/sys v0.25.0 // indirect
+	golang.org/x/sys v0.26.0 // indirect
 )

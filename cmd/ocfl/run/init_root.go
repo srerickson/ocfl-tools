@@ -37,8 +37,7 @@ func (cmd *initRootCmd) Run(ctx context.Context, fsysConfig string, stdout io.Wr
 		return errors.New(msg)
 	}
 	spec := ocfl.Spec(cmd.Spec)
-	reg := extension.DefaultRegister()
-	layout, err := reg.NewLayout(cmd.Layout)
+	layout, err := extension.DefaultRegistry().NewLayout(cmd.Layout)
 	if err != nil {
 		return fmt.Errorf("could not initialize storage root: %w", err)
 	}

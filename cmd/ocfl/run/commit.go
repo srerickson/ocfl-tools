@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/digest"
 )
 
 const commitHelp = "Create or update an object in a storage root"
@@ -30,7 +31,10 @@ func (cmd *commitCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer
 	if err != nil {
 		return err
 	}
-	alg := cmd.Alg
+	alg, err := digest.DefaultRegistry().Get(cmd.Alg)
+	if err != nil {
+		return err
+	}
 	if obj.Exists() {
 		// use existing object's digest algorithm
 		alg = obj.Inventory().DigestAlgorithm()
