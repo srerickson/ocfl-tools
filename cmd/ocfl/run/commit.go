@@ -8,6 +8,7 @@ import (
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
+	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/ui"
 )
 
 const commitHelp = "Create or update an object in a storage root"
@@ -26,7 +27,6 @@ func (cmd *commitCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer
 	if root == nil {
 		return errors.New("storage root not set")
 	}
-	readFS := ocfl.DirFS(cmd.Path)
 	obj, err := root.NewObject(ctx, cmd.ID)
 	if err != nil {
 		return err
@@ -39,7 +39,9 @@ func (cmd *commitCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer
 		// use existing object's digest algorithm
 		alg = obj.Inventory().DigestAlgorithm()
 	}
-	stage, err := ocfl.StageDir(ctx, readFS, ".", alg)
+	stageFS := ocfl.DirFS(cmd.Path)
+	// stage files and show ui with progress
+	stage, err := ui.StageDir(ctx, stageFS, ".", alg)
 	if err != nil {
 		return err
 	}
