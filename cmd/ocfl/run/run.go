@@ -39,8 +39,8 @@ const (
 )
 
 var (
-	Version   string // set by -ldflags
-	BuildTime string // set by -ldflags
+	Version   = "dev" // also set by -ldflags
+	BuildTime string  // set by -ldflags
 )
 
 var cli struct {
