@@ -39,8 +39,8 @@ const (
 )
 
 var (
-	Version   = "dev" // also set by -ldflags
-	BuildTime string  // set by -ldflags
+	Version   = "0.1.2" // set by -ldflags (set to work with `go install`)
+	BuildTime string    // set by -ldflags
 )
 
 var cli struct {
@@ -257,8 +257,10 @@ func codeRev() string {
 }
 
 func printVersion(stdout io.Writer) {
-	fmt.Fprintln(stdout, "ocfl: v"+Version)
-	fmt.Fprintln(stdout, "date:", BuildTime)
+	fmt.Fprintln(stdout, "ocfl-tools: v"+Version)
+	if BuildTime != "" {
+		fmt.Fprintln(stdout, "date:", BuildTime)
+	}
 	if rev := codeRev(); rev != "" {
 		fmt.Fprintln(stdout, "commit:", rev[:8])
 	}
