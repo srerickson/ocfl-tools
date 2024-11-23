@@ -28,6 +28,8 @@ github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.38 h1:xN0PViSptTHJ7QIKyWeW
 github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.38/go.mod h1:orUzUoWBICDyc+hz49KpySb3sa2Tw3c0IaFqrH4c4dg=
 github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.39 h1:Bdepdtm7SAUxPIZj6x4qg5al04R6tZa965T/j597XxM=
 github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.39/go.mod h1:AudGmEyVwvi3k5MVpEZP2NEVF1HqtZoMze42Uq1RTiE=
+github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.40 h1:CbalQNEYQljzAJ+3beY8FQBShdLNLpJzHL4h/5LSFMc=
+github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.40/go.mod h1:1iYVr/urNWuZ7WZ1829FSE7RRTaXvzFdwrEQV8Z40cE=
 github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.23 h1:A2w6m6Tmr+BNXjDsr7M90zkWjsu4JXHwrzPg235STs4=
 github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.23/go.mod h1:35EVp9wyeANdujZruvHiQUAo9E3vbhnIO1mTCAxMlY0=
 github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.24 h1:4usbeaes3yJnCFC7kfeyhkdkPtoRYPa/hTmCqMpKpLI=
@@ -62,6 +64,8 @@ github.com/aws/aws-sdk-go-v2/service/s3 v1.67.0 h1:SwaJ0w0MOp0pBTIKTamLVeTKD+iOW
 github.com/aws/aws-sdk-go-v2/service/s3 v1.67.0/go.mod h1:TMhLIyRIyoGVlaEMAt+ITMbwskSTpcGsCPDq91/ihY0=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.67.1 h1:LXLnDfjT/P6SPIaCE86xCOjJROPn4FNB2EdN68vMK5c=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.67.1/go.mod h1:ralv4XawHjEMaHOWnTFushl0WRqim/gQWesAMF6hTow=
+github.com/aws/aws-sdk-go-v2/service/s3 v1.68.0 h1:bFpcqdwtAEsgpZXvkTxIThFQx/EM0oV6kXmfFIGjxME=
+github.com/aws/aws-sdk-go-v2/service/s3 v1.68.0/go.mod h1:ralv4XawHjEMaHOWnTFushl0WRqim/gQWesAMF6hTow=
 github.com/aws/aws-sdk-go-v2/service/sso v1.24.5 h1:HJwZwRt2Z2Tdec+m+fPjvdmkq2s9Ra+VR0hjF7V2o40=
 github.com/aws/aws-sdk-go-v2/service/sso v1.24.5/go.mod h1:wrMCEwjFPms+V86TCQQeOxQF/If4vT44FGIOFiMC2ck=
 github.com/aws/aws-sdk-go-v2/service/sso v1.24.6 h1:3zu537oLmsPfDMyjnUS2g+F2vITgy5pB74tHI+JBNoM=
@@ -88,6 +92,8 @@ github.com/charmbracelet/x/ansi v0.4.5 h1:LqK4vwBNaXw2AyGIICa5/29Sbdq58GbGdFngSe
 github.com/charmbracelet/x/ansi v0.4.5/go.mod h1:dk73KoMTT5AX5BsX0KrqhsTqAnhZZoCBjs7dGWp4Ktw=
 github.com/charmbracelet/x/ansi v0.5.0 h1:o94cKkWJRaiNQYbfz5WOLrbg9hULaryyKvWm+oLX7js=
 github.com/charmbracelet/x/ansi v0.5.0/go.mod h1:dk73KoMTT5AX5BsX0KrqhsTqAnhZZoCBjs7dGWp4Ktw=
+github.com/charmbracelet/x/ansi v0.5.2 h1:dEa1x2qdOZXD/6439s+wF7xjV+kZLu/iN00GuXXrU9E=
+github.com/charmbracelet/x/ansi v0.5.2/go.mod h1:KBUFw1la39nl0dLl10l5ORDAqGXaeurTQmwyyVKse/Q=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/go-logfmt/logfmt v0.6.0 h1:wGYYu3uicYdqXVgoYbvnkrPVXkuLM1p1ifugDMEdRi4=
