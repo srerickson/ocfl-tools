@@ -1,11 +1,6 @@
 package run
 
 import (
-	"context"
-	"errors"
-	"io"
-	"log/slog"
-
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
 )
@@ -22,12 +17,13 @@ type commitCmd struct {
 	Path    string `arg:"" name:"path" help:"local directory with object state to commit"`
 }
 
-func (cmd *commitCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger, getenv func(string) string) error {
-	if root == nil {
-		return errors.New("storage root not set")
+func (cmd *commitCmd) Run(g *globals) error {
+	root, err := g.getRoot()
+	if err != nil {
+		return err
 	}
 	readFS := ocfl.DirFS(cmd.Path)
-	obj, err := root.NewObject(ctx, cmd.ID)
+	obj, err := root.NewObject(g.ctx, cmd.ID)
 	if err != nil {
 		return err
 	}
@@ -39,19 +35,19 @@ func (cmd *commitCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer
 		// use existing object's digest algorithm
 		alg = obj.Inventory().DigestAlgorithm()
 	}
-	stage, err := ocfl.StageDir(ctx, readFS, ".", alg)
+	stage, err := ocfl.StageDir(g.ctx, readFS, ".", alg)
 	if err != nil {
 		return err
 	}
 	userName := cmd.Name
 	if userName == "" {
-		userName = getenv(envVarUserName)
+		userName = g.getenv(envVarUserName)
 	}
 	userEmail := cmd.Email
 	if userEmail == "" {
-		userEmail = getenv(envVarUserEmail)
+		userEmail = g.getenv(envVarUserEmail)
 	}
-	return obj.Commit(ctx, &ocfl.Commit{
+	return obj.Commit(g.ctx, &ocfl.Commit{
 		ID:      cmd.ID,
 		Stage:   stage,
 		Message: cmd.Message,

@@ -1,11 +1,9 @@
 package run
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 
 	"github.com/srerickson/ocfl-go"
 )
@@ -17,28 +15,34 @@ type InfoCmd struct {
 	ObjPath string `name:"object" help:"full path to object root. If set, --root and --id are ignored."`
 }
 
-func (cmd *InfoCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger, getenv func(string) string) error {
+func (cmd *InfoCmd) Run(g *globals) error {
 	switch {
 	case cmd.ObjPath != "":
-		fsys, dir, err := parseLocation(ctx, cmd.ObjPath, logger, getenv)
+		fsys, dir, err := g.parseLocation(cmd.ObjPath)
 		if err != nil {
 			return err
 		}
-		obj, err := ocfl.NewObject(ctx, fsys, dir)
+		obj, err := ocfl.NewObject(g.ctx, fsys, dir)
 		if err != nil {
 			return err
 		}
-		return printObjectInfo(obj, stdout)
-	case root == nil:
-		return errors.New("storage root not set")
+		return printObjectInfo(obj, g.stdout)
 	case cmd.ID != "":
-		obj, err := root.NewObject(ctx, cmd.ID)
+		root, err := g.getRoot()
 		if err != nil {
 			return err
 		}
-		return printObjectInfo(obj, stdout)
+		obj, err := root.NewObject(g.ctx, cmd.ID)
+		if err != nil {
+			return err
+		}
+		return printObjectInfo(obj, g.stdout)
 	default:
-		printRootInfo(root, stdout, logger)
+		root, err := g.getRoot()
+		if err != nil {
+			return err
+		}
+		printRootInfo(root, g.stdout, g.logger)
 	}
 	return nil
 }

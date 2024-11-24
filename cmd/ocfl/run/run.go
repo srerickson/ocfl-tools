@@ -43,23 +43,9 @@ var (
 	BuildTime string    // set by -ldflags
 )
 
-var cli struct {
-	RootConfig string `name:"root" short:"r" help:"The prefix/directory of the OCFL storage root used for the command ($$${env_root})"`
-	Debug      bool   `name:"debug" help:"enable debug log messages"`
+func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) error {
+	ocflv1.Enable() // hopefully this won't be necessary in the near future.
 
-	InitRoot initRootCmd `cmd:"init-root" help:"${init_root_help}"`
-	Commit   commitCmd   `cmd:"commit" help:"${commit_help}"`
-	Export   exportCmd   `cmd:"export" help:"${export_help}"`
-	Diff     DiffCmd     `cmd:"diff" help:"${diff_help}"`
-	Info     InfoCmd     `cmd:"info" help:"${info_help}"`
-	LS       lsCmd       `cmd:"ls" help:"${ls_help}"`
-	Log      LogCmd      `cmd:"log" help:"${log_help}"`
-	Validate ValidateCmd `cmd:"validate" help:"${validate_help}"`
-	Version  struct{}    `cmd:"version" help:"Print ocfl-tools version information"`
-}
-
-func CLI(ctx context.Context, args []string, stdout, stderr io.Writer, getenv func(string) string) error {
-	ocflv1.Enable() // hopefuly this won't be necessary in the near future.
 	parser, err := kong.New(&cli, kong.Name("ocfl"),
 		kong.Writers(stdout, stderr),
 		kong.Description("tools for working with OCFL repositories"),
@@ -94,83 +80,60 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer, getenv fu
 		}
 		return err
 	}
+	cli.globals.ctx = ctx
+	cli.globals.stdout = stdout
+	cli.globals.stderr = stderr
+	cli.globals.stdin = stdin
+	cli.globals.getenv = getenv
 	logLevel := log.WarnLevel
 	if cli.Debug {
 		logLevel = log.DebugLevel
 	}
-	logger := newLogger(logLevel, stderr)
-	// root config from flag or environment
-	rootConifg := cli.RootConfig
-	if rootConifg == "" {
-		rootConifg = getenv(envVarRoot)
+	cli.globals.logger = newLogger(logLevel, stderr)
+	//root config from flag or environment
+	if cli.globals.RootLocation == "" {
+		cli.globals.RootLocation = getenv(envVarRoot)
 	}
-	// commands that don't require an existing root
-	switch kongCtx.Command() {
-	case "init-root":
-		if err := cli.InitRoot.Run(ctx, rootConifg, stdout, logger, getenv); err != nil {
-			logger.Error(err.Error())
-			return err
-		}
-		return nil
-	case "version":
-		printVersion(stdout)
-		return nil
-	}
-	// run a command on existing root
-	var runner interface {
-		Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger, getenv func(string) string) error
-	}
-	switch kongCtx.Command() {
-	case "commit <path>":
-		runner = &cli.Commit
-	case "ls":
-		runner = &cli.LS
-	case "log":
-		runner = &cli.Log
-	case "export":
-		runner = &cli.Export
-	case "diff":
-		runner = &cli.Diff
-	case "validate":
-		runner = &cli.Validate
-	case "info":
-		runner = &cli.Info
-	default:
-		kongCtx.PrintUsage(true)
-		err = fmt.Errorf("unknown command: %s", kongCtx.Command())
-		logger.Error(err.Error())
-		return err
-	}
-	// fsys is nil if rootConfig is empty
-	fsys, dir, err := parseLocation(ctx, rootConifg, logger, getenv)
-	if err != nil {
-		logger.Error("parsing OCFL root path: " + err.Error())
-		return err
-	}
-	var root *ocfl.Root
-	if fsys != nil {
-		root, err = ocfl.NewRoot(ctx, fsys, dir)
-		if err != nil {
-			rootcnf := locationString(fsys, dir)
-			logger.Error("reading OCFL storage root: " + rootcnf + ": " + err.Error())
-			return err
-		}
-	}
-	// root may be nil
-	if err := runner.Run(ctx, root, stdout, logger, getenv); err != nil {
-		logger.Error(err.Error())
+	if err := kongCtx.Run(&cli.globals); err != nil {
+		cli.globals.logger.Error(err.Error())
 		return err
 	}
 	return nil
 }
 
+var cli struct {
+	globals
+
+	InitRoot initRootCmd `cmd:"init-root" help:"${init_root_help}"`
+	Commit   commitCmd   `cmd:"commit" help:"${commit_help}"`
+	Export   exportCmd   `cmd:"export" help:"${export_help}"`
+	Diff     DiffCmd     `cmd:"diff" help:"${diff_help}"`
+	Info     InfoCmd     `cmd:"info" help:"${info_help}"`
+	LS       lsCmd       `cmd:"ls" help:"${ls_help}"`
+	Log      LogCmd      `cmd:"log" help:"${log_help}"`
+	Validate ValidateCmd `cmd:"validate" help:"${validate_help}"`
+	Version  struct{}    `cmd:"version" help:"Print ocfl-tools version information"`
+}
+
+type globals struct {
+	ctx    context.Context
+	stdout io.Writer
+	stderr io.Writer
+	stdin  io.Reader
+	getenv func(string) string
+	logger *slog.Logger
+
+	RootLocation string `name:"root" short:"r" help:"The prefix/directory of the OCFL storage root used for the command ($$${env_root})"`
+	Debug        bool   `name:"debug" help:"enable debug log messages"`
+}
+
 // convert a location, which may be a local path or an 's3://' path, into
 // an FS and a path.
-func parseLocation(ctx context.Context, location string, logger *slog.Logger, getenv func(string) string) (ocfl.WriteFS, string, error) {
-	if location == "" {
-		return nil, "", nil
+func (g *globals) parseLocation(loc string) (ocfl.WriteFS, string, error) {
+	if loc == "" {
+		return nil, "", errors.New("location not set")
 	}
-	rl, err := url.Parse(location)
+	rl, err := url.Parse(loc)
 	if err != nil {
 		return nil, "", err
 	}
@@ -180,10 +143,10 @@ func parseLocation(ctx context.Context, location string, logger *slog.Logger, ge
 		bucket := rl.Host
 		prefix := strings.TrimPrefix(rl.Path, "/")
 		// values passed through getenv are mostly for testing.
-		envKey := getenv(envVarAWSKey)
-		envSecret := getenv(envVarAWSSecret)
-		envRegion := getenv(envVarAWSRegion)
-		envEndpoint := getenv(envVarAWSEndpoint)
+		envKey := g.getenv(envVarAWSKey)
+		envSecret := g.getenv(envVarAWSSecret)
+		envRegion := g.getenv(envVarAWSRegion)
+		envEndpoint := g.getenv(envVarAWSEndpoint)
 		if envKey != "" && envSecret != "" {
 			creds := credentials.NewStaticCredentialsProvider(envKey, envSecret, "")
 			loadOpts = append(loadOpts, config.WithCredentialsProvider(creds))
@@ -191,7 +154,7 @@ func parseLocation(ctx context.Context, location string, logger *slog.Logger, ge
 		if envRegion != "" {
 			loadOpts = append(loadOpts, config.WithRegion(envRegion))
 		}
-		cfg, err := config.LoadDefaultConfig(ctx, loadOpts...)
+		cfg, err := config.LoadDefaultConfig(g.ctx, loadOpts...)
 		if err != nil {
 			return nil, "", err
 		}
@@ -201,16 +164,16 @@ func parseLocation(ctx context.Context, location string, logger *slog.Logger, ge
 				o.BaseEndpoint = aws.String(envEndpoint)
 			})
 		}
-		if strings.EqualFold(getenv(envVarS3PathStyle), "true") {
+		if strings.EqualFold(g.getenv(envVarS3PathStyle), "true") {
 			s3Opts = append(s3Opts, func(o *s3.Options) {
 				o.UsePathStyle = true
 			})
 		}
 		s3Client := s3.NewFromConfig(cfg, s3Opts...)
-		fsys := &ocflS3.BucketFS{S3: s3Client, Bucket: bucket, Logger: logger}
+		fsys := &ocflS3.BucketFS{S3: s3Client, Bucket: bucket, Logger: g.logger}
 		return fsys, prefix, nil
 	default:
-		absPath, err := filepath.Abs(location)
+		absPath, err := filepath.Abs(loc)
 		if err != nil {
 			return nil, "", err
 		}
@@ -220,6 +183,19 @@ func parseLocation(ctx context.Context, location string, logger *slog.Logger, ge
 		}
 		return fsys, ".", nil
 	}
+}
+
+func (g *globals) getRoot() (*ocfl.Root, error) {
+	fsys, dir, err := g.parseLocation(g.RootLocation)
+	if err != nil {
+		return nil, err
+	}
+	root, err := ocfl.NewRoot(g.ctx, fsys, dir)
+	if err != nil {
+		rootcnf := locationString(fsys, dir)
+		return nil, fmt.Errorf("reading OCFL storage root %s: %w", rootcnf, err)
+	}
+	return root, nil
 }
 
 func locationString(fsys ocfl.FS, dir string) string {
