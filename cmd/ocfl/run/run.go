@@ -22,7 +22,6 @@ import (
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/local"
 	ocflS3 "github.com/srerickson/ocfl-go/backend/s3"
-	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
 const (
@@ -44,7 +43,6 @@ var (
 )
 
 func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) error {
-	ocflv1.Enable() // hopefully this won't be necessary in the near future.
 
 	parser, err := kong.New(&cli, kong.Name("ocfl"),
 		kong.Writers(stdout, stderr),
