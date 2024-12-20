@@ -1,14 +1,8 @@
 package run
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"io"
 	"io/fs"
-	"log/slog"
-
-	"github.com/srerickson/ocfl-go"
 )
 
 const lsHelp = "List objects in a storage root or files in an object"
@@ -19,22 +13,23 @@ type lsCmd struct {
 	WithDigests bool   `name:"digests" short:"d" help:"Show digests when listing contents of an object version."`
 }
 
-func (cmd *lsCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger, getenv func(string) string) error {
-	if root == nil {
-		return errors.New("storage root not set")
+func (cmd *lsCmd) Run(g *globals) error {
+	root, err := g.getRoot()
+	if err != nil {
+		return err
 	}
 	if cmd.ID == "" {
 		// list object ids in root
-		for obj, err := range root.Objects(ctx) {
+		for obj, err := range root.Objects(g.ctx) {
 			if err != nil {
 				return fmt.Errorf("while listing objects in root: %w", err)
 			}
-			fmt.Fprintln(stdout, obj.Inventory().ID())
+			fmt.Fprintln(g.stdout, obj.Inventory().ID())
 		}
 		return nil
 	}
 	// list contents of an object
-	obj, err := root.NewObject(ctx, cmd.ID)
+	obj, err := root.NewObject(g.ctx, cmd.ID)
 	if err != nil {
 		return fmt.Errorf("listing contents from object %q: %w", cmd.ID, err)
 	}
@@ -52,10 +47,10 @@ func (cmd *lsCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, lo
 	digests := ver.State().PathMap()
 	for _, p := range paths {
 		if cmd.WithDigests {
-			fmt.Fprintln(stdout, digests[p], p)
+			fmt.Fprintln(g.stdout, digests[p], p)
 			continue
 		}
-		fmt.Fprintln(stdout, p)
+		fmt.Fprintln(g.stdout, p)
 	}
 	return nil
 }

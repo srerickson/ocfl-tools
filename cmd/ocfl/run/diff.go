@@ -1,12 +1,9 @@
 package run
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
-	"log/slog"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/diff"
@@ -19,11 +16,12 @@ type DiffCmd struct {
 	Vs []int  `name:"versions" short:"v" default:"-1,0" help:"Object versions to compare, separated by commas. 0 refers to HEAD, negative numbers match versions before HEAD."`
 }
 
-func (cmd *DiffCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger, _ func(string) string) error {
-	if root == nil {
-		return errors.New("storage root not set")
+func (cmd *DiffCmd) Run(g *globals) error {
+	root, err := g.getRoot()
+	if err != nil {
+		return err
 	}
-	obj, err := root.NewObject(ctx, cmd.ID)
+	obj, err := root.NewObject(g.ctx, cmd.ID)
 	if err != nil {
 		return fmt.Errorf("reading object id: %q: %w", cmd.ID, err)
 	}
@@ -78,7 +76,7 @@ func (cmd *DiffCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, 
 		return err
 	}
 	if !result.Empty() {
-		fmt.Fprint(stdout, result.String())
+		fmt.Fprint(g.stdout, result.String())
 	}
 	return nil
 }

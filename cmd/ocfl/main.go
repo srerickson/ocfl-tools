@@ -9,7 +9,7 @@ import (
 
 func main() {
 	ctx := context.Background()
-	if err := run.CLI(ctx, os.Args, os.Stdout, os.Stderr, os.Getenv); err != nil {
+	if err := run.CLI(ctx, os.Args, os.Stdin, os.Stdout, os.Stderr, os.Getenv); err != nil {
 		os.Exit(1)
 	}
 }

@@ -1,7 +1,6 @@
 package run
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -20,18 +19,18 @@ type initRootCmd struct {
 	ExistingOK  bool   `name:"existing-ok" help:"don't return an error if a storage root already exists at the location"`
 }
 
-func (cmd *initRootCmd) Run(ctx context.Context, fsysConfig string, stdout io.Writer, logger *slog.Logger, getenv func(string) string) error {
-	fsys, dir, err := parseLocation(ctx, fsysConfig, logger, getenv)
+func (cmd *initRootCmd) Run(g *globals) error {
+	fsys, dir, err := g.parseLocation(g.RootLocation)
 	if err != nil {
 		return err
 	}
 	if fsys == nil {
 		return errors.New("location for new storage root is required")
 	}
-	if _, err := ocfl.NewRoot(ctx, fsys, dir); err == nil {
+	if _, err := ocfl.NewRoot(g.ctx, fsys, dir); err == nil {
 		msg := "storage root already exists"
 		if cmd.ExistingOK {
-			logger.Warn(msg)
+			g.logger.Warn(msg)
 			return nil
 		}
 		return errors.New(msg)
@@ -41,11 +40,11 @@ func (cmd *initRootCmd) Run(ctx context.Context, fsysConfig string, stdout io.Wr
 	if err != nil {
 		return fmt.Errorf("could not initialize storage root: %w", err)
 	}
-	root, err := ocfl.NewRoot(ctx, fsys, dir, ocfl.InitRoot(spec, cmd.Description, layout))
+	root, err := ocfl.NewRoot(g.ctx, fsys, dir, ocfl.InitRoot(spec, cmd.Description, layout))
 	if err != nil {
 		return fmt.Errorf("while initializing storage root: %w", err)
 	}
-	printRootInfo(root, stdout, logger)
+	printRootInfo(root, g.stdout, g.logger)
 	return nil
 }
 

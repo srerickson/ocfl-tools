@@ -25,6 +25,7 @@ func runCLI(args []string, env map[string]string, expect func(err error, stdout,
 	if env == nil {
 		env = map[string]string{}
 	}
+	stdin := strings.NewReader("")
 	stdout := &strings.Builder{}
 	stderr := &strings.Builder{}
 	getenv := func(key string) string { return env[key] }
@@ -34,7 +35,7 @@ func runCLI(args []string, env map[string]string, expect func(err error, stdout,
 		env["AWS_ENDPOINT_URL"] = testutil.S3Endpoint()
 		env["OCFL_S3_PATHSTYLE"] = "true"
 	}
-	err := run.CLI(ctx, args, stdout, stderr, getenv)
+	err := run.CLI(ctx, args, stdin, stdout, stderr, getenv)
 	expect(err, stdout.String(), stderr.String())
 }
 

@@ -1,10 +1,8 @@
 package run
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 
 	"github.com/srerickson/ocfl-go"
@@ -18,36 +16,42 @@ type ValidateCmd struct {
 	SkipDigest bool   `name:"skip-digest" help:"skip digest (checksum) validation"`
 }
 
-func (cmd *ValidateCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger, getenv func(string) string) error {
+func (cmd *ValidateCmd) Run(g *globals) error {
 	switch {
 	case cmd.ObjPath != "":
-		fsys, dir, err := parseLocation(ctx, cmd.ObjPath, logger, getenv)
+		fsys, dir, err := g.parseLocation(cmd.ObjPath)
 		if err != nil {
 			return fmt.Errorf("in object path: %w", err)
 		}
-		logger := logger.With("object_path", locationString(fsys, dir))
-		result := ocfl.ValidateObject(ctx, fsys, dir, cmd.validationOptions(logger)...)
+		logger := g.logger.With("object_path", locationString(fsys, dir))
+		result := ocfl.ValidateObject(g.ctx, fsys, dir, cmd.validationOptions(logger)...)
 		if result.Err() != nil {
 			return errors.New("object has errors")
 		}
-	case root == nil:
-		return errors.New("storage root not set")
 	case cmd.ID != "":
-		logger := logger.With("object_id", cmd.ID)
-		result := root.ValidateObject(ctx, cmd.ID, cmd.validationOptions(logger)...)
+		root, err := g.getRoot()
+		if err != nil {
+			return err
+		}
+		logger := g.logger.With("object_id", cmd.ID)
+		result := root.ValidateObject(g.ctx, cmd.ID, cmd.validationOptions(logger)...)
 		if result.Err() != nil {
 			return errors.New("object has errors")
 		}
 	default:
 		// FIXME
-		logger.Warn("root validation is not fully implemented: validating all objects in the root, but not conformance of root structure itself. [https://github.com/srerickson/ocfl-go/issues/98]")
+		g.logger.Warn("root validation is not fully implemented: validating all objects in the root, but not conformance of root structure itself. [https://github.com/srerickson/ocfl-go/issues/98]")
+		root, err := g.getRoot()
+		if err != nil {
+			return err
+		}
 		var badObjs []string
-		for obj, err := range root.Objects(ctx) {
+		for obj, err := range root.Objects(g.ctx) {
 			if err != nil {
 				return fmt.Errorf("finding objects in the storage root: %w", err)
 			}
-			logger = logger.With("object_path", obj.Path())
-			result := ocfl.ValidateObject(ctx, obj.FS(), obj.Path(), cmd.validationOptions(logger)...)
+			g.logger = g.logger.With("object_path", obj.Path())
+			result := ocfl.ValidateObject(g.ctx, obj.FS(), obj.Path(), cmd.validationOptions(g.logger)...)
 			if result.Err() != nil {
 				badObjs = append(badObjs, obj.Path())
 			}

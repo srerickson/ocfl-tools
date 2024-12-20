@@ -1,17 +1,13 @@
 package run
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
-
-	"github.com/srerickson/ocfl-go"
 )
 
 const exportHelp = "Export object contents to the local filesystem"
@@ -25,12 +21,13 @@ type exportCmd struct {
 	To       string   `name:"to" short:"t" default:"." help:"The destination directory for writing exported content. For single file exports, use '-' to print file to STDOUT or a file name."`
 }
 
-func (cmd *exportCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer, logger *slog.Logger, _ func(string) string) error {
-	if root == nil {
-		return errors.New("storage root not set")
+func (cmd *exportCmd) Run(g *globals) error {
+	root, err := g.getRoot()
+	if err != nil {
+		return err
 	}
 	// list contents of an object
-	obj, err := root.NewObject(ctx, cmd.ID)
+	obj, err := root.NewObject(g.ctx, cmd.ID)
 	if err != nil {
 		return fmt.Errorf("reading object id: %q: %w", cmd.ID, err)
 	}
@@ -39,7 +36,7 @@ func (cmd *exportCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer
 		err := fmt.Errorf("object %q not found at root path %s: %w", cmd.ID, obj.Path(), fs.ErrNotExist)
 		return err
 	}
-	versionFS, err := obj.OpenVersion(ctx, cmd.Version)
+	versionFS, err := obj.OpenVersion(g.ctx, cmd.Version)
 	if err != nil {
 		return err
 	}
@@ -86,7 +83,7 @@ func (cmd *exportCmd) Run(ctx context.Context, root *ocfl.Root, stdout io.Writer
 	}
 	if cmd.To == "-" {
 		// print first match to STDOUT
-		return exportFile(versionFS, matches[0], false, stdout)
+		return exportFile(versionFS, matches[0], false, g.stdout)
 	}
 	exists, isDir, err := stat(absTo)
 	if err != nil {
