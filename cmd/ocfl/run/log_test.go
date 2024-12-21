@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/carlmjohnson/be"
+	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/testutil"
 )
 
 func TestLog(t *testing.T) {
@@ -14,7 +15,7 @@ func TestLog(t *testing.T) {
 			"OCFL_ROOT": filepath.Join(goodStoreFixtures, `reg-extension-dir-root`),
 		}
 		args := []string{`log`, `--id`, "ark:123/abc"}
-		runCLI(args, env, func(err error, stdout string, stderr string) {
+		testutil.RunCLI(args, env, func(err error, stdout string, stderr string) {
 			be.NilErr(t, err)
 			be.True(t, strings.Contains(stdout, "An version with one file"))
 		})
@@ -22,7 +23,7 @@ func TestLog(t *testing.T) {
 	t.Run("--object", func(t *testing.T) {
 		// using object path
 		args := []string{`log`, `--object`, filepath.Join(goodObjectFixtures, "spec-ex-full")}
-		runCLI(args, nil, func(err error, stdout string, stderr string) {
+		testutil.RunCLI(args, nil, func(err error, stdout string, stderr string) {
 			be.NilErr(t, err)
 			lines := strings.Split(stdout, "\n")
 			be.In(t, "Initial import", lines[0])
@@ -31,12 +32,12 @@ func TestLog(t *testing.T) {
 		})
 	})
 	t.Run("missing args", func(t *testing.T) {
-		runCLI([]string{"log"}, nil, func(err error, stdout string, stderr string) {
+		testutil.RunCLI([]string{"log"}, nil, func(err error, stdout string, stderr string) {
 			be.True(t, err != nil)
 			be.In(t, "missing required flag", stderr)
 		})
 		args := []string{"log", "--root", filepath.Join(goodStoreFixtures, `reg-extension-dir-root`)}
-		runCLI(args, nil, func(err error, stdout string, stderr string) {
+		testutil.RunCLI(args, nil, func(err error, stdout string, stderr string) {
 			be.True(t, err != nil)
 			be.In(t, "missing required flag", stderr)
 		})

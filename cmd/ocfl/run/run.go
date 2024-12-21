@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"path"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 
 	"github.com/alecthomas/kong"
@@ -35,11 +34,6 @@ const (
 	envVarAWSSecret   = "AWS_SECRET_ACCESS_KEY"
 	envVarAWSEndpoint = "AWS_ENDPOINT_URL"
 	envVarAWSRegion   = "AWS_REGION"
-)
-
-var (
-	Version   = "0.1.2" // set by -ldflags (set to work with `go install`)
-	BuildTime string    // set by -ldflags
 )
 
 func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) error {
@@ -110,7 +104,7 @@ var cli struct {
 	LS       lsCmd       `cmd:"ls" help:"${ls_help}"`
 	Log      LogCmd      `cmd:"log" help:"${log_help}"`
 	Validate ValidateCmd `cmd:"validate" help:"${validate_help}"`
-	Version  struct{}    `cmd:"version" help:"Print ocfl-tools version information"`
+	Version  VersionCmd  `cmd:"version" help:"Print ocfl-tools version information"`
 }
 
 type globals struct {
@@ -208,35 +202,6 @@ func locationString(fsys ocfl.FS, dir string) string {
 		return filepath.Join(fsys.Root(), localDir)
 	default:
 		panic(errors.New("unsupported backend type"))
-	}
-}
-
-func codeRev() string {
-	if info, ok := debug.ReadBuildInfo(); ok {
-		revision := ""
-		localmods := false
-		for _, setting := range info.Settings {
-			switch setting.Key {
-			case "vcs.revision":
-				revision = setting.Value
-			case "vcs.modified":
-				localmods = setting.Value == "true"
-			}
-		}
-		if !localmods {
-			return revision
-		}
-	}
-	return ""
-}
-
-func printVersion(stdout io.Writer) {
-	fmt.Fprintln(stdout, "ocfl-tools: v"+Version)
-	if BuildTime != "" {
-		fmt.Fprintln(stdout, "date:", BuildTime)
-	}
-	if rev := codeRev(); rev != "" {
-		fmt.Fprintln(stdout, "commit:", rev[:8])
 	}
 }
 
