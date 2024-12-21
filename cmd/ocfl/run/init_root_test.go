@@ -11,15 +11,15 @@ func TestInitRoot(t *testing.T) {
 	t.Run("existing OK", func(t *testing.T) {
 		env := map[string]string{"OCFL_ROOT": t.TempDir()}
 		args := []string{"init-root"}
-		runCLI(args, env, func(err error, stdout string, stderr string) {
+		testutil.RunCLI(args, env, func(err error, stdout string, stderr string) {
 			be.NilErr(t, err) // ok the first time
 		})
-		runCLI(args, env, func(err error, stdout string, stderr string) {
+		testutil.RunCLI(args, env, func(err error, stdout string, stderr string) {
 			be.True(t, err != nil) // error because existing
 			be.In(t, `already exists`, stderr)
 		})
 		args = []string{"init-root", "--existing-ok"}
-		runCLI(args, env, func(err error, stdout string, stderr string) {
+		testutil.RunCLI(args, env, func(err error, stdout string, stderr string) {
 			be.NilErr(t, err) // no error if --existing-ok
 			be.In(t, `already exists`, stderr)
 
@@ -42,7 +42,7 @@ func TestInitRoot(t *testing.T) {
 				"--description", rootDesc,
 				"--layout", layout,
 			}
-			runCLI(args, env, func(err error, stdout string, stderr string) {
+			testutil.RunCLI(args, env, func(err error, stdout string, stderr string) {
 				be.NilErr(t, err)
 				be.In(t, root, stdout)
 				be.In(t, layout, stdout)
@@ -67,7 +67,7 @@ func TestInitRoot(t *testing.T) {
 				"--name", "Me",
 				"--email", "me@domain.net",
 			}
-			runCLI(args, env, func(err error, _ string, _ string) {
+			testutil.RunCLI(args, env, func(err error, _ string, _ string) {
 				be.NilErr(t, err)
 			})
 			// ocfl validate
@@ -75,7 +75,7 @@ func TestInitRoot(t *testing.T) {
 				"validate",
 				"--id", objID,
 			}
-			runCLI(args, env, func(err error, stdout string, _ string) {
+			testutil.RunCLI(args, env, func(err error, stdout string, _ string) {
 				be.NilErr(t, err)
 			})
 		}
