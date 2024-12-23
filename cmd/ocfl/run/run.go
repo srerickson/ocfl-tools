@@ -49,14 +49,15 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			"init_root_help": initRootHelp,
 			"ls_help":        lsHelp,
 			"log_help":       logHelp,
+			"stage_help":     stageHelp,
 			"validate_help":  validateHelp,
 			"env_root":       envVarRoot,
 			"env_user_name":  envVarUserName,
 			"env_user_email": envVarUserEmail,
 		},
 		kong.ConfigureHelp(kong.HelpOptions{
-			Summary: true,
-			Compact: true,
+			// Summary: true,
+			// Compact: true,
 		}),
 	)
 	if err != nil {
@@ -96,12 +97,13 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 var cli struct {
 	globals
 
-	InitRoot initRootCmd `cmd:"init-root" help:"${init_root_help}"`
-	Commit   commitCmd   `cmd:"commit" help:"${commit_help}"`
-	Export   exportCmd   `cmd:"export" help:"${export_help}"`
-	Diff     DiffCmd     `cmd:"diff" help:"${diff_help}"`
 	Info     InfoCmd     `cmd:"info" help:"${info_help}"`
 	LS       lsCmd       `cmd:"ls" help:"${ls_help}"`
+	Export   exportCmd   `cmd:"export" help:"${export_help}"`
+	InitRoot initRootCmd `cmd:"init-root" help:"${init_root_help}"`
+	Stage    StageCmd    `cmd:"stage" help:"${stage_help}"`
+	Commit   commitCmd   `cmd:"commit" help:"${commit_help}"`
+	Diff     DiffCmd     `cmd:"diff" help:"${diff_help}"`
 	Log      LogCmd      `cmd:"log" help:"${log_help}"`
 	Validate ValidateCmd `cmd:"validate" help:"${validate_help}"`
 	Version  VersionCmd  `cmd:"version" help:"Print ocfl-tools version information"`
