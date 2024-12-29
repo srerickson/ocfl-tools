@@ -2,9 +2,13 @@ package run
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
+	"path/filepath"
+	"time"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
@@ -13,13 +17,6 @@ import (
 const (
 	stageHelp = "commands for working with stages (i.e., object updates)"
 )
-
-type stage struct {
-	ID      string
-	Version ocfl.VNum
-	State   ocfl.DigestMap
-	AlgID   string
-}
 
 func (s stage) Alg() digest.Algorithm {
 	alg, err := digest.DefaultRegistry().Get(s.AlgID)
@@ -73,12 +70,14 @@ func (cmd *NewStageCmd) Run(g *globals) error {
 	if err := writeStage(&stage, cmd.File); err != nil {
 		return err
 	}
+	g.logger.Info("new stage file created", "path", cmd.File)
 	return nil
 }
 
 type StageAddCmd struct {
-	File  string   `name:"file" short:"f" default:"ocfl-stage.json" help:"stage file path"`
-	Paths []string `arg:"" help:"files or directory paths to add to the stage"`
+	File string `name:"file" short:"f" default:"ocfl-stage.json" help:"stage file path"`
+	As   string `name:"as" help:"logical path for added content"`
+	Path string `arg:"" help:"files or directory paths to add to the stage"`
 }
 
 func (cmd *StageAddCmd) Run(g *globals) error {
@@ -87,32 +86,56 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
+	if cmd.As != "" && !fs.ValidPath(cmd.As) {
+		return fmt.Errorf("invalid logical path for new content: %s", cmd.As)
+	}
 	alg := stage.Alg()
-	var change bool
-	for _, p := range cmd.Paths {
-		ftype, err := getType(p)
-		if err != nil {
-			return err
+	absPath, err := filepath.Abs(cmd.Path)
+	if err != nil {
+		return err
+	}
+	ftype, err := getType(absPath)
+	if err != nil {
+		return err
+	}
+	added := []stageFile{}
+	switch {
+	case ftype.IsDir():
+		as := "."
+		if cmd.As != "" {
+			as = cmd.As
 		}
-		switch {
-		case ftype.IsDir():
-			fsys := ocfl.DirFS(p)
-			files, walkErr := ocfl.WalkFiles(ctx, fsys, ".")
-			files.IgnoreHidden().DigestBatch(ctx, 5, alg).Stage()
-			if err := walkErr(); err != nil {
+		fsys := ocfl.DirFS(absPath)
+		files, walkErr := ocfl.WalkFiles(ctx, fsys, ".")
+		for digests, err := range files.IgnoreHidden().DigestBatch(ctx, 5, alg) {
+			if err != nil {
 				return err
 			}
-		case ftype.IsRegular():
-			//
-		default:
-			// ignore it
+			newFile := stageFile{
+				ManifestPath: digests.FullPath(),
+				StatePath:    path.Join(as, digests.FullPath()),
+				Digests:      digests.Digests,
+				Size:         digests.Info.Size(),
+				Modtime:      digests.Info.ModTime(),
+			}
+			added = append(added, newFile)
+			fmt.Println(newFile.ManifestPath)
 		}
-		fmt.Println(p, ftype)
-	}
-	if change {
-		if err := writeStage(stage, cmd.File); err != nil {
+		if err := walkErr(); err != nil {
 			return err
 		}
+	// case ftype.IsRegular():
+	//
+	default:
+		return errors.New("path has unsupported file type")
+		// ignore it
+	}
+	if stage.Added == nil {
+		stage.Added = map[string][]stageFile{}
+	}
+	stage.Added[absPath] = added
+	if err := writeStage(stage, cmd.File); err != nil {
+		return err
 	}
 	return nil
 }
@@ -147,4 +170,20 @@ func getType(name string) (fs.FileMode, error) {
 		return 0, err
 	}
 	return info.Mode().Type(), nil
+}
+
+type stage struct {
+	ID      string
+	Version ocfl.VNum
+	State   ocfl.DigestMap
+	AlgID   string
+	Added   map[string][]stageFile
+}
+
+type stageFile struct {
+	ManifestPath string     `json:"content"`
+	StatePath    string     `json:"state"`
+	Digests      digest.Set `json:"digests"`
+	Size         int64      `json:"size"`
+	Modtime      time.Time  `json:"modtime"`
 }

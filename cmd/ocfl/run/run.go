@@ -78,7 +78,7 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	cli.globals.stderr = stderr
 	cli.globals.stdin = stdin
 	cli.globals.getenv = getenv
-	logLevel := log.WarnLevel
+	logLevel := log.InfoLevel
 	if cli.Debug {
 		logLevel = log.DebugLevel
 	}
