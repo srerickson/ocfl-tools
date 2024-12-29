@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/srerickson/ocfl-go"
@@ -27,8 +28,9 @@ func (s stage) Alg() digest.Algorithm {
 }
 
 type StageCmd struct {
-	New NewStageCmd `cmd:"new" help:"create a new stage file for preparing updates to an object"`
-	Add StageAddCmd `cmd:"add" help:"add files or directories to a stage"`
+	New    NewStageCmd    `cmd:"new" help:"create a new stage file for preparing updates to an object"`
+	Add    StageAddCmd    `cmd:"add" help:"add files or directories to a stage"`
+	Commit StageCommitCmd `cmd:"commit" help:"commit new version"`
 }
 
 type NewStageCmd struct {
@@ -47,15 +49,18 @@ func (cmd *NewStageCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	if _, err := readStage(cmd.File); err == nil {
+	if _, err := openStageFile(cmd.File); err == nil {
 		err := fmt.Errorf("stage file exists: %s", cmd.File)
 		return err
 	}
 	var stage = stage{
-		ID:      cmd.ID,
-		Version: ocfl.V(1),
-		State:   ocfl.DigestMap{},
-		AlgID:   cmd.Alg,
+		ID:              cmd.ID,
+		Version:         ocfl.V(1),
+		NewState:        ocfl.PathMap{},
+		NewFixity:       map[string]digest.Set{},
+		ExistingContent: []string{},
+		NewContent:      map[string]localFile{},
+		AlgID:           cmd.Alg,
 	}
 	if obj.Exists() {
 		inv := obj.Inventory()
@@ -64,13 +69,13 @@ func (cmd *NewStageCmd) Run(g *globals) error {
 			return err
 		}
 		stage.Version = next
-		stage.State = inv.Version(0).State()
+		stage.NewState = inv.Version(0).State().PathMap()
 		stage.AlgID = inv.DigestAlgorithm().ID()
 	}
-	if err := writeStage(&stage, cmd.File); err != nil {
+	if err := stage.write(cmd.File); err != nil {
 		return err
 	}
-	g.logger.Info("new stage file created", "path", cmd.File)
+	g.logger.Info("stage file created", "path", cmd.File, "object_id", stage.ID, "object_version", stage.Version)
 	return nil
 }
 
@@ -82,7 +87,7 @@ type StageAddCmd struct {
 
 func (cmd *StageAddCmd) Run(g *globals) error {
 	ctx := g.ctx
-	stage, err := readStage(cmd.File)
+	stage, err := openStageFile(cmd.File)
 	if err != nil {
 		return err
 	}
@@ -94,11 +99,10 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	ftype, err := getType(absPath)
+	ftype, err := getFileType(absPath)
 	if err != nil {
 		return err
 	}
-	added := []stageFile{}
 	switch {
 	case ftype.IsDir():
 		as := "."
@@ -111,15 +115,23 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 			if err != nil {
 				return err
 			}
-			newFile := stageFile{
-				ManifestPath: digests.FullPath(),
-				StatePath:    path.Join(as, digests.FullPath()),
-				Digests:      digests.Digests,
-				Size:         digests.Info.Size(),
-				Modtime:      digests.Info.ModTime(),
+			statePath := path.Join(as, digests.FullPath())
+			primaryDigest := digests.Digests.Delete(digests.Algorithm.ID())
+			stage.NewState[statePath] = primaryDigest
+			if len(digests.Digests) > 0 {
+				stage.NewFixity[primaryDigest] = digests.Digests
 			}
-			added = append(added, newFile)
-			fmt.Println(newFile.ManifestPath)
+			inObject := slices.Contains(stage.ExistingContent, primaryDigest)
+			_, inStage := stage.NewContent[primaryDigest]
+			if !inObject && !inStage {
+				stage.NewContent[primaryDigest] = localFile{
+					LocalDir:  absPath,
+					LocalPath: digests.FullPath(),
+					Size:      digests.Info.Size(),
+					Modtime:   digests.Info.ModTime(),
+				}
+			}
+			fmt.Println(digests.FullPath())
 		}
 		if err := walkErr(); err != nil {
 			return err
@@ -130,17 +142,49 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 		return errors.New("path has unsupported file type")
 		// ignore it
 	}
-	if stage.Added == nil {
-		stage.Added = map[string][]stageFile{}
-	}
-	stage.Added[absPath] = added
-	if err := writeStage(stage, cmd.File); err != nil {
+	if err := stage.write(cmd.File); err != nil {
 		return err
 	}
 	return nil
 }
 
-func readStage(name string) (*stage, error) {
+type StageCommitCmd struct {
+	File    string `name:"file" short:"f" default:"ocfl-stage.json" help:"stage file path"`
+	Message string `name:"message" short:"m" help:"Message to include in the object version metadata"`
+	Name    string `name:"name" short:"n" help:"Username to include in the object version metadata ($$${env_user_name})"`
+	Email   string `name:"email" short:"e" help:"User email to include in the object version metadata ($$${env_user_email})"`
+}
+
+func (cmd *StageCommitCmd) Run(g *globals) error {
+	ctx := g.ctx
+	root, err := g.getRoot()
+	if err != nil {
+		return err
+	}
+	stage, err := openStageFile(cmd.File)
+	if err != nil {
+		return err
+	}
+	obj, err := root.NewObject(g.ctx, stage.ID)
+	if err != nil {
+		return err
+	}
+	commit := &ocfl.Commit{
+		ID:      stage.ID,
+		Message: cmd.Message,
+		User: ocfl.User{
+			Name:    cmd.Name,
+			Address: cmd.Email,
+		},
+	}
+	commit.Stage, err = stage.Stage()
+	if err != nil {
+		return err
+	}
+	return obj.Commit(ctx, commit)
+}
+
+func openStageFile(name string) (*stage, error) {
 	var stage stage
 	bytes, err := os.ReadFile(name)
 	if err != nil {
@@ -153,7 +197,17 @@ func readStage(name string) (*stage, error) {
 	return &stage, nil
 }
 
-func writeStage(s *stage, name string) error {
+type stage struct {
+	ID              string
+	Version         ocfl.VNum
+	NewState        ocfl.PathMap
+	ExistingContent []string // array for current digests
+	AlgID           string
+	NewContent      map[string]localFile // digest to local source
+	NewFixity       map[string]digest.Set
+}
+
+func (s stage) write(name string) error {
 	stageBytes, err := json.Marshal(s)
 	if err != nil {
 		return err
@@ -164,26 +218,45 @@ func writeStage(s *stage, name string) error {
 	return nil
 }
 
-func getType(name string) (fs.FileMode, error) {
+// Stage returns s as an ocfl.Stage
+func (s *stage) Stage() (*ocfl.Stage, error) {
+	state := s.NewState.DigestMap()
+	if err := state.Valid(); err != nil {
+		return nil, err
+	}
+	return &ocfl.Stage{
+		State:           state,
+		DigestAlgorithm: s.Alg(),
+		ContentSource:   s,
+		FixitySource:    s,
+	}, nil
+}
+
+// stage implements ocfl.ContentSource
+func (s stage) GetContent(digest string) (ocfl.FS, string) {
+	localFile, exists := s.NewContent[digest]
+	if !exists {
+		return nil, ""
+	}
+	return ocfl.DirFS(localFile.LocalDir), localFile.LocalPath
+}
+
+// stage implements ocfl.FixitySource
+func (s stage) GetFixity(digest string) digest.Set {
+	return s.NewFixity[digest]
+}
+
+type localFile struct {
+	LocalDir  string    `json:"local"`
+	LocalPath string    `json:"path"`
+	Size      int64     `json:"size"`
+	Modtime   time.Time `json:"modtime"`
+}
+
+func getFileType(name string) (fs.FileMode, error) {
 	info, err := os.Stat(name)
 	if err != nil {
 		return 0, err
 	}
 	return info.Mode().Type(), nil
-}
-
-type stage struct {
-	ID      string
-	Version ocfl.VNum
-	State   ocfl.DigestMap
-	AlgID   string
-	Added   map[string][]stageFile
-}
-
-type stageFile struct {
-	ManifestPath string     `json:"content"`
-	StatePath    string     `json:"state"`
-	Digests      digest.Set `json:"digests"`
-	Size         int64      `json:"size"`
-	Modtime      time.Time  `json:"modtime"`
 }
