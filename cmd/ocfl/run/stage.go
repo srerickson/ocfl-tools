@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -35,7 +36,7 @@ type StageCmd struct {
 }
 
 type NewStageCmd struct {
-	Stage string `name:"stage" short:"s" default:"ocfl-stage.json" help:"stage file path"`
+	Stage string `name:"stage" short:"s" default:"ocfl-stage.json" help:"path to stage file"`
 	Spec  string `name:"ocflv" default:"1.1" help:"OCFL spec for the new object version"`
 	Alg   string `name:"alg" default:"sha512" help:"Digest Algorithm used to digest content. Ignored for existing objects."`
 	ID    string `name:"object_id" arg:"" help:"object id for the new stage"`
@@ -81,10 +82,10 @@ func (cmd *NewStageCmd) Run(g *globals) error {
 }
 
 type StageAddCmd struct {
-	Stage string `name:"stage" short:"s" default:"ocfl-stage.json" help:"stage file path"`
+	Stage string `name:"stage" short:"s" default:"ocfl-stage.json" help:"path to stage file"`
 	Jobs  int    `name:"jobs" short:"j" default:"0" help:"number of files to digest concurrently. Defaults to number of CPUs."`
-	As    string `name:"as" help:"logical name/path for added content"`
-	Path  string `arg:"" help:"file or directory path to add to the stage"`
+	As    string `name:"as" help:"logical name for the new content. Default: base name if path is a file; '.' if path is a directory."`
+	Path  string `arg:"" help:"file or parent directory for content to add to the stage"`
 }
 
 func (cmd *StageAddCmd) Run(g *globals) error {
@@ -123,70 +124,32 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 				return err
 			}
 			statePath := path.Join(as, digests.FullPath())
-			primaryDigest := digests.Digests.Delete(digests.Algorithm.ID())
-			addedDigest := stage.NewState[statePath]
-			if addedDigest != primaryDigest {
-				stage.NewState[statePath] = primaryDigest
-				switch {
-				case addedDigest == "":
-					g.logger.Info("new file", "path", statePath)
-				default:
-					g.logger.Info("updated file", "path", statePath)
-				}
-			}
-			if len(digests.Digests) > 0 {
-				stage.NewFixity[primaryDigest] = digests.Digests
-			}
-			alreadyCommitted := slices.Contains(stage.ExistingContent, primaryDigest)
-			_, isStaged := stage.NewContent[primaryDigest]
-			if !alreadyCommitted && !isStaged {
-				stage.NewContent[primaryDigest] = localFile{
-					LocalDir:  absPath,
-					LocalPath: digests.FullPath(),
-					Size:      digests.Info.Size(),
-					Modtime:   digests.Info.ModTime(),
-				}
+			if err := stage.add(statePath, digests, absPath, g.logger); err != nil {
+				return err
 			}
 		}
 		if err := walkErr(); err != nil {
 			return fmt.Errorf("while walking directory tree: %w", err)
 		}
 	case ftype.IsRegular():
-		fsys := ocfl.DirFS(filepath.Dir(absPath))
+		localDir := filepath.Dir(absPath)
+		fsys := ocfl.DirFS(localDir)
 		base := filepath.Base(absPath)
 		statePath := base
 		if cmd.As != "" {
 			statePath = cmd.As
 		}
-		digestsSeq := ocfl.Files(fsys, base).Digest(ctx, alg)
-		for digests, err := range digestsSeq {
+		fileSeq, errFn := ocfl.Files(fsys, base).Stat(ctx).UntilErr()
+		for digests, err := range fileSeq.Digest(ctx, alg) {
 			if err != nil {
 				return err
 			}
-			primaryDigest := digests.Digests.Delete(digests.Algorithm.ID())
-			addedDigest := stage.NewState[statePath]
-			if addedDigest != primaryDigest {
-				stage.NewState[statePath] = primaryDigest
-				switch {
-				case addedDigest == "":
-					g.logger.Info("new file", "path", statePath)
-				default:
-					g.logger.Info("updated file", "path", statePath)
-				}
+			if err := stage.add(statePath, digests, localDir, g.logger); err != nil {
+				return err
 			}
-			if len(digests.Digests) > 0 {
-				stage.NewFixity[primaryDigest] = digests.Digests
-			}
-			alreadyCommitted := slices.Contains(stage.ExistingContent, primaryDigest)
-			_, isStaged := stage.NewContent[primaryDigest]
-			if !alreadyCommitted && !isStaged {
-				stage.NewContent[primaryDigest] = localFile{
-					LocalDir:  absPath,
-					LocalPath: digests.FullPath(),
-					Size:      digests.Info.Size(),
-					Modtime:   digests.Info.ModTime(),
-				}
-			}
+		}
+		if err := errFn(); err != nil {
+			return err
 		}
 	default:
 		return errors.New("path has unsupported file type")
@@ -198,7 +161,7 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 }
 
 type StageCommitCmd struct {
-	File    string `name:"stage" short:"s" default:"ocfl-stage.json" help:"stage file path"`
+	Stage   string `name:"stage" short:"s" default:"ocfl-stage.json" help:"path to stage file"`
 	Message string `name:"message" short:"m" help:"Message to include in the object version metadata"`
 	Name    string `name:"name" short:"n" help:"Username to include in the object version metadata ($$${env_user_name})"`
 	Email   string `name:"email" short:"e" help:"User email to include in the object version metadata ($$${env_user_email})"`
@@ -210,7 +173,7 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	stage, err := openStageFile(cmd.File)
+	stage, err := openStageFile(cmd.Stage)
 	if err != nil {
 		return err
 	}
@@ -218,22 +181,19 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	commit := &ocfl.Commit{
-		ID:      stage.ID,
-		Message: cmd.Message,
-		User: ocfl.User{
-			Name:    cmd.Name,
-			Address: cmd.Email,
-		},
-	}
-	commit.Stage, err = stage.Stage()
+	commit, err := stage.buildCommit()
 	if err != nil {
 		return fmt.Errorf("stage has errors: %w", err)
+	}
+	commit.Message = cmd.Message
+	commit.User = ocfl.User{
+		Name:    cmd.Name,
+		Address: cmd.Email,
 	}
 	if err := obj.Commit(ctx, commit); err != nil {
 		return fmt.Errorf("creating new object version: %w", err)
 	}
-	if err := os.Remove(cmd.File); err != nil {
+	if err := os.Remove(cmd.Stage); err != nil {
 		return fmt.Errorf("removing stage file: %w", err)
 	}
 	return nil
@@ -262,6 +222,35 @@ type stage struct {
 	NewFixity       map[string]digest.Set
 }
 
+// add adds a
+func (stage *stage) add(logicalPath string, digests *ocfl.FileDigests, localDir string, logger *slog.Logger) error {
+	newDigest := digests.Digests.Delete(digests.Algorithm.ID())
+	prevDigest := stage.NewState[logicalPath]
+	if prevDigest != newDigest {
+		stage.NewState[logicalPath] = newDigest
+		switch {
+		case prevDigest == "":
+			logger.Info("new file", "path", logicalPath)
+		default:
+			logger.Info("updated file", "path", logicalPath)
+		}
+	}
+	if len(digests.Digests) > 0 {
+		stage.NewFixity[newDigest] = digests.Digests
+	}
+	alreadyCommitted := slices.Contains(stage.ExistingContent, newDigest)
+	_, isStaged := stage.NewContent[newDigest]
+	if !alreadyCommitted && !isStaged {
+		stage.NewContent[newDigest] = localFile{
+			LocalDir:  localDir,
+			LocalPath: digests.FullPath(),
+			Size:      digests.Info.Size(),
+			Modtime:   digests.Info.ModTime(),
+		}
+	}
+	return nil
+}
+
 func (s stage) write(name string) error {
 	stageBytes, err := json.Marshal(s)
 	if err != nil {
@@ -273,17 +262,20 @@ func (s stage) write(name string) error {
 	return nil
 }
 
-// Stage returns s as an ocfl.Stage
-func (s *stage) Stage() (*ocfl.Stage, error) {
+// buildCommit returns s as an ocfl.buildCommit
+func (s *stage) buildCommit() (*ocfl.Commit, error) {
 	state := s.NewState.DigestMap()
 	if err := state.Valid(); err != nil {
 		return nil, err
 	}
-	return &ocfl.Stage{
-		State:           state,
-		DigestAlgorithm: s.Alg(),
-		ContentSource:   s,
-		FixitySource:    s,
+	return &ocfl.Commit{
+		ID: s.ID,
+		Stage: &ocfl.Stage{
+			State:           state,
+			DigestAlgorithm: s.Alg(),
+			ContentSource:   s,
+			FixitySource:    s,
+		},
 	}, nil
 }
 
