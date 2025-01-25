@@ -27,28 +27,35 @@ func TestStage(t *testing.T) {
 		be.NilErr(t, err)
 	})
 	// v1 stage
-	cmd := []string{"stage", "new", "--stage", stagePath, "--ocflv", "1.0", "--alg", "sha256", objID}
+	cmd := []string{"stage", "new", "--file", stagePath, "--ocflv", "1.0", "--alg", "sha256", objID}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 		be.NilErr(t, err)
 		be.In(t, stagePath, stderr)
 	})
 	// add content to the stage
 	v1Dir := filepath.Join(contentFixture, "folder1", "folder2")
-	cmd = []string{"stage", "add", "--stage", stagePath, "--as", "new-stuff", v1Dir}
+	cmd = []string{"stage", "add", "--file", stagePath, "--as", "new-stuff", v1Dir}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 		be.NilErr(t, err)
 	})
+	// list stage content
+	cmd = []string{"stage", "ls", "--file", stagePath}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+		expect := "new-stuff/file2.txt\nnew-stuff/sculpture-stone-face-head-888027.jpg\n"
+		be.Equal(t, expect, stdout) // stdout only has two items
+	})
 	// commit stage
-	cmd = []string{"stage", "commit", "--stage", stagePath, "-m", "first commit", "-n", name, "-e", email}
+	cmd = []string{"stage", "commit", "--file", stagePath, "-m", "first commit", "-n", name, "-e", email}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 		be.NilErr(t, err)
 	})
 	// check new content for v1
 	cmd = []string{"ls", "--version", "1", "--id", objID}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
-		be.In(t, "new-stuff/file2.txt\n", stdout)
-		be.In(t, "new-stuff/sculpture-stone-face-head-888027.jpg\n", stdout)
-		be.Equal(t, 2, strings.Count(stdout, "\n")) // stdout only has two items
+		be.NilErr(t, err)
+		expect := "new-stuff/file2.txt\nnew-stuff/sculpture-stone-face-head-888027.jpg\n"
+		be.Equal(t, expect, stdout) // stdout only has two items
 	})
 	// stage file should be deleted
 	if _, err := os.Stat(stagePath); err == nil {
@@ -56,19 +63,19 @@ func TestStage(t *testing.T) {
 	}
 
 	// v2 stage
-	cmd = []string{"stage", "new", "--stage", stagePath, objID}
+	cmd = []string{"stage", "new", "--file", stagePath, objID}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 		be.NilErr(t, err)
 		be.In(t, stagePath, stderr)
 	})
 	// add content to the stage
 	v2File := filepath.Join(contentFixture, "hello.csv")
-	cmd = []string{"stage", "add", "--stage", stagePath, "--as", "tmp/data.csv", v2File}
+	cmd = []string{"stage", "add", "--file", stagePath, "--as", "tmp/data.csv", v2File}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 		be.NilErr(t, err)
 	})
 	// commit stage
-	cmd = []string{"stage", "commit", "--stage", stagePath, "-m", "commit 2", "-n", name, "-e", email}
+	cmd = []string{"stage", "commit", "--file", stagePath, "-m", "commit 2", "-n", name, "-e", email}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 		be.NilErr(t, err)
 	})
