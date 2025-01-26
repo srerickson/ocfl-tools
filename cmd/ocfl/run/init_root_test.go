@@ -58,6 +58,7 @@ func TestInitRoot(t *testing.T) {
 				return
 			}
 			// ocfl commit
+			// FIXME
 			objID := "object-01"
 			args = []string{
 				"commit",

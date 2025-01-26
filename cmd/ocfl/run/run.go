@@ -40,9 +40,8 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 	parser, err := kong.New(&cli, kong.Name("ocfl"),
 		kong.Writers(stdout, stderr),
-		kong.Description("tools for working with OCFL repositories"),
+		kong.Description("command line tool for working with OCFL repositories"),
 		kong.Vars{
-			"commit_help":    commitHelp,
 			"diff_help":      diffHelp,
 			"export_help":    exportHelp,
 			"info_help":      infoHelp,
@@ -56,8 +55,8 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			"env_user_email": envVarUserEmail,
 		},
 		kong.ConfigureHelp(kong.HelpOptions{
-			// Summary: true,
-			// Compact: true,
+			Summary: true,
+			Compact: true,
 		}),
 	)
 	if err != nil {
@@ -102,7 +101,6 @@ var cli struct {
 	Export   exportCmd   `cmd:"" help:"${export_help}"`
 	InitRoot initRootCmd `cmd:"" help:"${init_root_help}"`
 	Stage    StageCmd    `cmd:"" help:"${stage_help}"`
-	Commit   commitCmd   `cmd:"" help:"${commit_help}"`
 	Diff     DiffCmd     `cmd:"" help:"${diff_help}"`
 	Log      LogCmd      `cmd:"" help:"${log_help}"`
 	Validate ValidateCmd `cmd:"" help:"${validate_help}"`

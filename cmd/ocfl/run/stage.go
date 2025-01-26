@@ -32,11 +32,11 @@ func (s stage) Alg() digest.Algorithm {
 }
 
 type StageCmd struct {
-	New    NewStageCmd    `cmd:"" help:"create a new stage file for preparing updates to an object"`
-	Add    StageAddCmd    `cmd:"" help:"add files or directories to a stage"`
-	Rm     StageRmCmd     `cmd:"" help:"remove a file or directory from the stage's state"`
-	Ls     StageListCmd   `cmd:"" help:"list files in the stage's state"`
-	Commit StageCommitCmd `cmd:"" help:"commit new version"`
+	New    NewStageCmd    `cmd:"" help:"create a new stage for preparing updates to an object"`
+	Add    StageAddCmd    `cmd:"" help:"add a file or directory to the stage"`
+	Rm     StageRmCmd     `cmd:"" help:"remove a file or directory from the stage"`
+	Ls     StageListCmd   `cmd:"" help:"list files in the stage state"`
+	Commit StageCommitCmd `cmd:"" help:"commit the stage as a new object version"`
 }
 
 // shared fields used by all stage sub-commands
