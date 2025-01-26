@@ -40,7 +40,7 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 	parser, err := kong.New(&cli, kong.Name("ocfl"),
 		kong.Writers(stdout, stderr),
-		kong.Description("tools for working with OCFL repositories"),
+		kong.Description("command line tool for working with OCFL repositories"),
 		kong.Vars{
 			"commit_help":    commitHelp,
 			"diff_help":      diffHelp,
@@ -49,6 +49,7 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			"init_root_help": initRootHelp,
 			"ls_help":        lsHelp,
 			"log_help":       logHelp,
+			"stage_help":     stageHelp,
 			"validate_help":  validateHelp,
 			"env_root":       envVarRoot,
 			"env_user_name":  envVarUserName,
@@ -77,7 +78,7 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	cli.globals.stderr = stderr
 	cli.globals.stdin = stdin
 	cli.globals.getenv = getenv
-	logLevel := log.WarnLevel
+	logLevel := log.InfoLevel
 	if cli.Debug {
 		logLevel = log.DebugLevel
 	}
@@ -96,15 +97,16 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 var cli struct {
 	globals
 
-	InitRoot initRootCmd `cmd:"init-root" help:"${init_root_help}"`
-	Commit   commitCmd   `cmd:"commit" help:"${commit_help}"`
-	Export   exportCmd   `cmd:"export" help:"${export_help}"`
-	Diff     DiffCmd     `cmd:"diff" help:"${diff_help}"`
-	Info     InfoCmd     `cmd:"info" help:"${info_help}"`
-	LS       lsCmd       `cmd:"ls" help:"${ls_help}"`
-	Log      LogCmd      `cmd:"log" help:"${log_help}"`
-	Validate ValidateCmd `cmd:"validate" help:"${validate_help}"`
-	Version  VersionCmd  `cmd:"version" help:"Print ocfl-tools version information"`
+	Commit   CommitCmd   `cmd:"" help:"${commit_help}"`
+	Diff     DiffCmd     `cmd:"" help:"${diff_help}"`
+	Export   exportCmd   `cmd:"" help:"${export_help}"`
+	Info     InfoCmd     `cmd:"" help:"${info_help}"`
+	InitRoot initRootCmd `cmd:"" help:"${init_root_help}"`
+	Log      LogCmd      `cmd:"" help:"${log_help}"`
+	Ls       lsCmd       `cmd:"" help:"${ls_help}"`
+	Stage    StageCmd    `cmd:"" help:"${stage_help}"`
+	Validate ValidateCmd `cmd:"" help:"${validate_help}"`
+	Version  VersionCmd  `cmd:"" help:"Print ocfl-tools version information"`
 }
 
 type globals struct {
@@ -115,7 +117,7 @@ type globals struct {
 	getenv func(string) string
 	logger *slog.Logger
 
-	RootLocation string `name:"root" short:"r" help:"The prefix/directory of the OCFL storage root used for the command ($$${env_root})"`
+	RootLocation string `name:"root" help:"The prefix/directory of the OCFL storage root used for the command ($$${env_root})"`
 	Debug        bool   `name:"debug" help:"enable debug log messages"`
 }
 

@@ -3,6 +3,8 @@ package run
 import (
 	"fmt"
 	"io/fs"
+
+	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/util"
 )
 
 const lsHelp = "List objects in a storage root or files in an object"
@@ -43,14 +45,12 @@ func (cmd *lsCmd) Run(g *globals) error {
 		err := fmt.Errorf("version %d not found in object %q", cmd.Version, cmd.ID)
 		return err
 	}
-	paths := ver.State().Paths()
-	digests := ver.State().PathMap()
-	for _, p := range paths {
+	for path, digest := range util.EachPath(ver.State()) {
 		if cmd.WithDigests {
-			fmt.Fprintln(g.stdout, digests[p], p)
+			fmt.Fprintln(g.stdout, digest, path)
 			continue
 		}
-		fmt.Fprintln(g.stdout, p)
+		fmt.Fprintln(g.stdout, path)
 	}
 	return nil
 }

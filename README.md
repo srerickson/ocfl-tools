@@ -7,23 +7,29 @@ creating, accessing, and updating objects in an OCFL storage root:
 ```
 Usage: ocfl <command> [flags]
 
-tools for working with OCFL repositories
+command line tool for working with OCFL repositories
 
 Flags:
   -h, --help           Show context-sensitive help.
-  -r, --root=STRING    The prefix/directory of the OCFL storage root used for the command ($OCFL_ROOT)
+      --root=STRING    The prefix/directory of the OCFL storage root used for the command ($OCFL_ROOT)
       --debug          enable debug log messages
 
 Commands:
-  init-root    Create a new OCFL storage root
-  commit       Create or update an object in a storage root
-  export       Export object contents to the local filesystem
-  diff         Show changed files between versions of an object
-  info         Show information about an object or the active storage root
-  ls           List objects in a storage root or files in an object
-  log          Show an object's revision log
-  validate     Validate an object or all objects in the storage root
-  version      Print ocfl-tools version information
+  commit          Create or update an object using contents of a local directory
+  diff            Show changed files between versions of an object
+  export          Export object contents to the local filesystem
+  info            Show information about an object or the active storage root
+  init-root       Create a new OCFL storage root
+  log             Show an object's revision log
+  ls              List objects in a storage root or files in an object
+  stage add       add a file or directory to the stage
+  stage commit    commit the stage as a new object version
+  stage ls        list files in the stage state
+  stage new       create a new stage for preparing updates to an object
+  stage rm        remove a file or directory from the stage
+  validate        Validate an object or all objects in the storage root
+  version         Print ocfl-tools version information
+
 
 Run "ocfl <command> --help" for more information on a command.
 ```
@@ -55,16 +61,6 @@ export AWS_SECRET_ACCESS_KEY="..."
 [Path-style S3 requests](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html#path-style-access) are enabled by setting `OCFL_S3_PATHSTYLE=true`.
 
 ## Installation
-
-The CLI is distributed in an Ubuntu-based docker image:
-[`docker.io/srerickson/ocfl-tools`](/hub.docker.com/repository/docker/srerickson/ocfl-tools/)
-
-```sh
-# start container shell with mounted data volume
-docker run -it -v /tmp:/data docker.io/srerickson/ocfl-tools
-# run `ocfl`
-ocfl --help
-```
 
 You can also build and install `ocfl` locally using [Go](https://go.dev/dl) (v1.23 or greater):
 

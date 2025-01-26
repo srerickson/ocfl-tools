@@ -5,19 +5,18 @@ import (
 	"github.com/srerickson/ocfl-go/digest"
 )
 
-const commitHelp = "Create or update an object in a storage root"
+const commitHelp = "Create or update an object using contents of a local directory"
 
-type commitCmd struct {
+type CommitCmd struct {
 	ID      string `name:"id" short:"i" help:"The ID for the object to create or update"`
 	Message string `name:"message" short:"m" help:"Message to include in the object version metadata"`
 	Name    string `name:"name" short:"n" help:"Username to include in the object version metadata ($$${env_user_name})"`
 	Email   string `name:"email" short:"e" help:"User email to include in the object version metadata ($$${env_user_email})"`
-	Spec    string `name:"ocflv" default:"1.1" help:"OCFL spec fo the new object"`
-	Alg     string `name:"alg" default:"sha512" help:"Digest Algorithm used to digest content. Ignored for commit to an existing object."`
+	Alg     string `name:"alg" default:"sha512" help:"Digest algorithm (ignored for commits to existing objects)"`
 	Path    string `arg:"" name:"path" help:"local directory with object state to commit"`
 }
 
-func (cmd *commitCmd) Run(g *globals) error {
+func (cmd *CommitCmd) Run(g *globals) error {
 	root, err := g.getRoot()
 	if err != nil {
 		return err
@@ -52,6 +51,5 @@ func (cmd *commitCmd) Run(g *globals) error {
 		Stage:   stage,
 		Message: cmd.Message,
 		User:    ocfl.User{Name: userName, Address: userEmail},
-		Spec:    ocfl.Spec(cmd.Spec),
 	})
 }

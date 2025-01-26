@@ -19,7 +19,7 @@ var (
 
 func TestRootNotSet(t *testing.T) {
 	// test commands fail if root is not set
-	cmds := []string{"init-root", "ls", "commit", "validate", "export", "diff"}
+	cmds := []string{"init-root", "ls", "stage", "validate", "export", "diff"}
 	for _, cmd := range cmds {
 		// should return an error
 		args := []string{cmd}
