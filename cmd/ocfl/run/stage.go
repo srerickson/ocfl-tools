@@ -6,16 +6,17 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
+	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/util"
 )
 
 const (
@@ -33,6 +34,7 @@ func (s stage) Alg() digest.Algorithm {
 type StageCmd struct {
 	New    NewStageCmd    `cmd:"" help:"create a new stage file for preparing updates to an object"`
 	Add    StageAddCmd    `cmd:"" help:"add files or directories to a stage"`
+	Rm     StageRmCmd     `cmd:"" help:"remove a file or directory from the stage's state"`
 	Ls     StageListCmd   `cmd:"" help:"list files in the stage's state"`
 	Commit StageCommitCmd `cmd:"" help:"commit new version"`
 }
@@ -209,7 +211,7 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 
 type StageListCmd struct {
 	stageCmdBase
-	// Changed bool `name:"changed" help:"only list new or updated files"`
+	WithDigests bool `name:"digests" short:"d" help:"include file digests in output"`
 }
 
 func (cmd *StageListCmd) Run(g *globals) error {
@@ -217,10 +219,43 @@ func (cmd *StageListCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	paths := slices.Collect(maps.Keys(stage.NewState))
-	slices.Sort(paths)
-	for _, p := range paths {
+	for p, digest := range util.PathMapEachPath(stage.NewState) {
+		if cmd.WithDigests {
+			fmt.Fprintln(g.stdout, digest, p)
+			continue
+		}
 		fmt.Fprintln(g.stdout, p)
+	}
+	return nil
+}
+
+// 'stage rm' command
+type StageRmCmd struct {
+	stageCmdBase
+	Recursive bool   `name:"recursive" short:"r" help:"remove all files in the directory"`
+	Path      string `arg:"" name:"path" help:"file or directory to remove"`
+}
+
+func (cmd *StageRmCmd) Run(g *globals) error {
+	stage, err := openStageFile(cmd.File)
+	if err != nil {
+		return err
+	}
+	toDelete := path.Clean(cmd.Path)
+	switch {
+	case cmd.Recursive && toDelete == ".":
+		stage.NewState = ocfl.PathMap{}
+	default:
+		for p := range util.PathMapEachPath(stage.NewState) {
+			recursiveMatch := cmd.Recursive && (strings.HasPrefix(p, toDelete+"/") || toDelete == ".")
+			if p == toDelete || recursiveMatch {
+				delete(stage.NewState, p)
+				g.logger.Info("removed", "path", p)
+			}
+		}
+	}
+	if err := stage.write(cmd.File); err != nil {
+		return err
 	}
 	return nil
 }

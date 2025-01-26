@@ -88,3 +88,50 @@ func TestStage(t *testing.T) {
 		be.Equal(t, 3, strings.Count(stdout, "\n")) // three items in v2 state
 	})
 }
+
+func TestStageRm(t *testing.T) {
+	tmpDir := t.TempDir()
+	stagePath := filepath.Join(tmpDir, "my-stage.json")
+	rootPath := filepath.Join(goodStoreFixtures, `reg-extension-dir-root`)
+	contentFile := filepath.Join(contentFixture, "hello.csv")
+	env := map[string]string{"OCFL_ROOT": rootPath}
+	objID := "ark:123/abc"
+	cmd := []string{"stage", "new", "--file", stagePath, "--ocflv", "1.0", "--alg", "sha256", objID}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+		be.In(t, stagePath, stderr)
+	})
+	// add additional file
+	cmd = []string{"stage", "add", "--file", stagePath, contentFile, "--as", "tmp/hello.csv"}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+	})
+	// rm without path arg should be an error
+	cmd = []string{"stage", "rm", "--file", stagePath}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.Nonzero(t, err)
+	})
+	// remove a_file.txt
+	cmd = []string{"stage", "rm", "--file", stagePath, "a_file.txt"}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+		be.In(t, "a_file.txt", stderr)
+	})
+	// only csv file should exist
+	cmd = []string{"stage", "ls", "--file", stagePath}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+		be.Equal(t, "tmp/hello.csv\n", stdout)
+	})
+	// remove directory
+	cmd = []string{"stage", "rm", "--file", stagePath, "-r", "tmp"}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+	})
+	// only csv file should exist
+	cmd = []string{"stage", "ls", "--file", stagePath}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+		be.Equal(t, "", stdout)
+	})
+}

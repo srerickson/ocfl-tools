@@ -117,7 +117,7 @@ type globals struct {
 	getenv func(string) string
 	logger *slog.Logger
 
-	RootLocation string `name:"root" short:"r" help:"The prefix/directory of the OCFL storage root used for the command ($$${env_root})"`
+	RootLocation string `name:"root" help:"The prefix/directory of the OCFL storage root used for the command ($$${env_root})"`
 	Debug        bool   `name:"debug" help:"enable debug log messages"`
 }
 
