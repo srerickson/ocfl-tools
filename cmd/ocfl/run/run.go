@@ -42,6 +42,7 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		kong.Writers(stdout, stderr),
 		kong.Description("command line tool for working with OCFL repositories"),
 		kong.Vars{
+			"commit_help":    commitHelp,
 			"diff_help":      diffHelp,
 			"export_help":    exportHelp,
 			"info_help":      infoHelp,
@@ -96,13 +97,14 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 var cli struct {
 	globals
 
-	Info     InfoCmd     `cmd:"" help:"${info_help}"`
-	LS       lsCmd       `cmd:"" help:"${ls_help}"`
-	Export   exportCmd   `cmd:"" help:"${export_help}"`
-	InitRoot initRootCmd `cmd:"" help:"${init_root_help}"`
-	Stage    StageCmd    `cmd:"" help:"${stage_help}"`
+	Commit   CommitCmd   `cmd:"" help:"${commit_help}"`
 	Diff     DiffCmd     `cmd:"" help:"${diff_help}"`
+	Export   exportCmd   `cmd:"" help:"${export_help}"`
+	Info     InfoCmd     `cmd:"" help:"${info_help}"`
+	InitRoot initRootCmd `cmd:"" help:"${init_root_help}"`
 	Log      LogCmd      `cmd:"" help:"${log_help}"`
+	Ls       lsCmd       `cmd:"" help:"${ls_help}"`
+	Stage    StageCmd    `cmd:"" help:"${stage_help}"`
 	Validate ValidateCmd `cmd:"" help:"${validate_help}"`
 	Version  VersionCmd  `cmd:"" help:"Print ocfl-tools version information"`
 }
