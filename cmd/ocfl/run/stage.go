@@ -191,14 +191,32 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
+	if cmd.Message == "" {
+		return fmt.Errorf("a message is required for the new object version")
+	}
+	userName := cmd.Name
+	if userName == "" {
+		userName = g.getenv(envVarUserName)
+	}
+	if userName == "" {
+		return fmt.Errorf("a name is required for the new object version")
+	}
+	userEmail := cmd.Email
+	if userEmail == "" {
+		userEmail = g.getenv(envVarUserEmail)
+	}
+	if userEmail != "" {
+		// make address a valid uri
+		userEmail = "email:" + userEmail
+	}
 	commit, err := stage.buildCommit()
 	if err != nil {
 		return fmt.Errorf("stage has errors: %w", err)
 	}
 	commit.Message = cmd.Message
 	commit.User = ocfl.User{
-		Name:    cmd.Name,
-		Address: cmd.Email,
+		Name:    userName,
+		Address: userEmail,
 	}
 	if err := obj.Commit(ctx, commit); err != nil {
 		return fmt.Errorf("creating new object version: %w", err)

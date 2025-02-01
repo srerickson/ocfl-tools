@@ -135,3 +135,61 @@ func TestStageRm(t *testing.T) {
 		be.Equal(t, "", stdout)
 	})
 }
+
+func TestStageCommit(t *testing.T) {
+	tmpDir := t.TempDir()
+	rootPath := filepath.Join(tmpDir, "ocfl")
+	stagePath := filepath.Join(tmpDir, "my-stage.json")
+	objID := "ark://my-object-01"
+	name := "Mr. Dibbs"
+	email := "dibbs@mr.com"
+	env := map[string]string{"OCFL_ROOT": rootPath}
+	// create storage root
+	testutil.RunCLI([]string{
+		"init-root",
+		"--description", "test stage command",
+		"--layout", "0003-hash-and-id-n-tuple-storage-layout",
+	}, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+	})
+	// v1 stage
+	cmd := []string{"stage", "new", "--file", stagePath, "--ocflv", "1.0", "--alg", "sha256", objID}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+		be.In(t, stagePath, stderr)
+	})
+	// add content to the stage
+	v1Dir := filepath.Join(contentFixture, "folder1", "folder2")
+	cmd = []string{"stage", "add", "--file", stagePath, "--as", "new-stuff", v1Dir}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+	})
+	// commit without file is an error
+	cmd = []string{"stage", "commit"}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.Nonzero(t, err)
+	})
+	// commit without message is an error
+	cmd = []string{"stage", "commit", "--file", stagePath}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.Nonzero(t, err)
+	})
+	// commit without name is an error
+	cmd = []string{"stage", "commit", "--file", stagePath, "-m", "message"}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.Nonzero(t, err)
+	})
+	// name and email can be set with env variables
+	env["OCFL_USER_NAME"] = name
+	env["OCFL_USER_EMAIL"] = email
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+	})
+	// name and email appear in the logs
+	cmd = []string{"log", "--id", objID}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+		be.In(t, "email:"+email, stdout)
+		be.In(t, name, stdout)
+	})
+}
