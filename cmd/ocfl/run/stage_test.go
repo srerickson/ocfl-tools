@@ -153,7 +153,7 @@ func TestStageCommit(t *testing.T) {
 		be.NilErr(t, err)
 	})
 	// v1 stage
-	cmd := []string{"stage", "new", "--file", stagePath, "--ocflv", "1.0", "--alg", "sha256", objID}
+	cmd := []string{"stage", "new", "--file", stagePath, "--ocflv", "1.0", "--alg", "sha512", objID}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 		be.NilErr(t, err)
 		be.In(t, stagePath, stderr)
@@ -192,4 +192,12 @@ func TestStageCommit(t *testing.T) {
 		be.In(t, "email:"+email, stdout)
 		be.In(t, name, stdout)
 	})
+	// object has not validation errors or warnings
+	cmd = []string{"validate", "--id", objID}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+		be.Zero(t, stdout)
+		be.Zero(t, stderr)
+	})
+
 }
