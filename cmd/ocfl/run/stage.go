@@ -1,35 +1,22 @@
 package run
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
-	"time"
 
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/util"
 )
 
 const (
 	stageHelp = "commands for working with stages (i.e., object updates)"
 )
-
-func (s stage) Alg() digest.Algorithm {
-	alg, err := digest.DefaultRegistry().Get(s.AlgID)
-	if err != nil {
-		panic(err)
-	}
-	return alg
-}
 
 type StageCmd struct {
 	Add    StageAddCmd    `cmd:"" help:"add a file or directory to the stage"`
@@ -52,7 +39,7 @@ type NewStageCmd struct {
 }
 
 func (cmd *NewStageCmd) Run(g *globals) error {
-	if _, err := openStageFile(cmd.File); err == nil {
+	if _, err := util.ReadStageFile(cmd.File); err == nil {
 		err := fmt.Errorf("stage file already exists: %s", cmd.File)
 		return err
 	}
@@ -64,27 +51,11 @@ func (cmd *NewStageCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	var stage = stage{
-		ID:              cmd.ID,
-		Version:         ocfl.V(1),
-		NewState:        ocfl.PathMap{},
-		NewFixity:       map[string]digest.Set{},
-		ExistingContent: []string{},
-		NewContent:      map[string]localFile{},
-		AlgID:           cmd.Alg,
+	stage, err := util.NewLocalStage(obj, cmd.ID, cmd.Alg)
+	if err != nil {
+		return err
 	}
-	if obj.Exists() {
-		inv := obj.Inventory()
-		next, err := inv.Head().Next()
-		if err != nil {
-			return err
-		}
-		stage.Version = next
-		stage.NewState = inv.Version(0).State().PathMap()
-		stage.AlgID = inv.DigestAlgorithm().ID()
-		stage.ExistingContent = inv.Manifest().Digests()
-	}
-	if err := stage.write(cmd.File); err != nil {
+	if err := stage.Write(cmd.File); err != nil {
 		return err
 	}
 	g.logger.Info("stage file created", "path", cmd.File, "object_id", stage.ID, "object_version", stage.Version)
@@ -100,7 +71,7 @@ type StageAddCmd struct {
 
 func (cmd *StageAddCmd) Run(g *globals) error {
 	ctx := g.ctx
-	stage, err := openStageFile(cmd.File)
+	stage, err := util.ReadStageFile(cmd.File)
 	if err != nil {
 		return err
 	}
@@ -111,7 +82,10 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 	if jobs < 1 {
 		jobs = runtime.NumCPU()
 	}
-	alg := stage.Alg()
+	alg, err := stage.Alg()
+	if err != nil {
+		return err
+	}
 	absPath, err := filepath.Abs(cmd.Path)
 	if err != nil {
 		return err
@@ -134,7 +108,7 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 				return err
 			}
 			statePath := path.Join(as, digests.FullPath())
-			if err := stage.add(statePath, digests, absPath, g.logger); err != nil {
+			if err := stage.AddFile(statePath, digests, absPath, g.logger); err != nil {
 				return err
 			}
 		}
@@ -154,7 +128,7 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 			if err != nil {
 				return err
 			}
-			if err := stage.add(statePath, digests, localDir, g.logger); err != nil {
+			if err := stage.AddFile(statePath, digests, localDir, g.logger); err != nil {
 				return err
 			}
 		}
@@ -164,7 +138,7 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 	default:
 		return errors.New("path has unsupported file type")
 	}
-	if err := stage.write(cmd.File); err != nil {
+	if err := stage.Write(cmd.File); err != nil {
 		return err
 	}
 	return nil
@@ -183,7 +157,7 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	stage, err := openStageFile(cmd.File)
+	stage, err := util.ReadStageFile(cmd.File)
 	if err != nil {
 		return err
 	}
@@ -209,7 +183,7 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 		// make address a valid uri
 		userEmail = "email:" + userEmail
 	}
-	commit, err := stage.buildCommit()
+	commit, err := stage.BuildCommit()
 	if err != nil {
 		return fmt.Errorf("stage has errors: %w", err)
 	}
@@ -233,7 +207,7 @@ type StageListCmd struct {
 }
 
 func (cmd *StageListCmd) Run(g *globals) error {
-	stage, err := openStageFile(cmd.File)
+	stage, err := util.ReadStageFile(cmd.File)
 	if err != nil {
 		return err
 	}
@@ -255,7 +229,7 @@ type StageRmCmd struct {
 }
 
 func (cmd *StageRmCmd) Run(g *globals) error {
-	stage, err := openStageFile(cmd.File)
+	stage, err := util.ReadStageFile(cmd.File)
 	if err != nil {
 		return err
 	}
@@ -272,111 +246,10 @@ func (cmd *StageRmCmd) Run(g *globals) error {
 			}
 		}
 	}
-	if err := stage.write(cmd.File); err != nil {
+	if err := stage.Write(cmd.File); err != nil {
 		return err
 	}
 	return nil
-}
-
-func openStageFile(name string) (*stage, error) {
-	var stage stage
-	bytes, err := os.ReadFile(name)
-	if err != nil {
-		// have you created
-		return nil, err
-	}
-	if err := json.Unmarshal(bytes, &stage); err != nil {
-		return nil, err
-	}
-	return &stage, nil
-}
-
-type stage struct {
-	ID              string
-	Version         ocfl.VNum
-	NewState        ocfl.PathMap
-	ExistingContent []string // array for current digests
-	AlgID           string
-	NewContent      map[string]localFile // digest to local source
-	NewFixity       map[string]digest.Set
-}
-
-// add adds a
-func (stage *stage) add(logicalPath string, digests *ocfl.FileDigests, localDir string, logger *slog.Logger) error {
-	oldDigest := stage.NewState[logicalPath]
-	newDigest := digests.Digests.Delete(digests.Algorithm.ID())
-	if oldDigest != newDigest {
-		stage.NewState[logicalPath] = newDigest
-		switch {
-		case oldDigest == "":
-			logger.Info("new file", "path", logicalPath)
-		default:
-			logger.Info("updated file", "path", logicalPath)
-		}
-	}
-	if len(digests.Digests) > 0 {
-		stage.NewFixity[newDigest] = digests.Digests
-	}
-	alreadyCommitted := slices.Contains(stage.ExistingContent, newDigest)
-	_, alreadyStaged := stage.NewContent[newDigest]
-	if !alreadyCommitted && !alreadyStaged {
-		stage.NewContent[newDigest] = localFile{
-			LocalDir:  localDir,
-			LocalPath: digests.FullPath(),
-			Size:      digests.Info.Size(),
-			Modtime:   digests.Info.ModTime(),
-		}
-	}
-	return nil
-}
-
-func (s stage) write(name string) error {
-	stageBytes, err := json.Marshal(s)
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(name, stageBytes, 0644); err != nil {
-		return err
-	}
-	return nil
-}
-
-// buildCommit returns s as an ocfl.buildCommit
-func (s *stage) buildCommit() (*ocfl.Commit, error) {
-	state := s.NewState.DigestMap()
-	if err := state.Valid(); err != nil {
-		return nil, err
-	}
-	return &ocfl.Commit{
-		ID: s.ID,
-		Stage: &ocfl.Stage{
-			State:           state,
-			DigestAlgorithm: s.Alg(),
-			ContentSource:   s,
-			FixitySource:    s,
-		},
-	}, nil
-}
-
-// stage implements ocfl.ContentSource
-func (s stage) GetContent(digest string) (ocfl.FS, string) {
-	localFile, exists := s.NewContent[digest]
-	if !exists {
-		return nil, ""
-	}
-	return ocfl.DirFS(localFile.LocalDir), localFile.LocalPath
-}
-
-// stage implements ocfl.FixitySource
-func (s stage) GetFixity(digest string) digest.Set {
-	return s.NewFixity[digest]
-}
-
-type localFile struct {
-	LocalDir  string    `json:"local"`
-	LocalPath string    `json:"path"`
-	Size      int64     `json:"size"`
-	Modtime   time.Time `json:"modtime"`
 }
 
 func getFileType(name string) (fs.FileMode, error) {
