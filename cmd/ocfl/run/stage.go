@@ -108,7 +108,7 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 				return err
 			}
 			statePath := path.Join(as, digests.FullPath())
-			if err := stage.AddFile(statePath, digests, absPath, g.logger); err != nil {
+			if err := stage.Add(statePath, digests, absPath, g.logger); err != nil {
 				return err
 			}
 		}
@@ -128,7 +128,7 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 			if err != nil {
 				return err
 			}
-			if err := stage.AddFile(statePath, digests, localDir, g.logger); err != nil {
+			if err := stage.Add(statePath, digests, localDir, g.logger); err != nil {
 				return err
 			}
 		}

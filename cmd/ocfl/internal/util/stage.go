@@ -2,8 +2,10 @@ package util
 
 import (
 	"encoding/json"
+	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"time"
 
@@ -68,6 +70,9 @@ type LocalStage struct {
 	// Primary digest algorithm (sha512 or sha256)
 	AlgID string
 
+	// Fixity Algorithms
+	FixityIDs []string
+
 	// NewContent maps (primary) digest values to local files
 	NewContent map[string]LocalFile
 
@@ -75,12 +80,79 @@ type LocalStage struct {
 	NewFixity map[string]digest.Set
 }
 
-func (s LocalStage) Alg() (digest.Algorithm, error) {
-	return digest.DefaultRegistry().Get(s.AlgID)
+func (s LocalStage) Algs() ([]digest.Algorithm, error) {
+	var err error
+	algs := make([]digest.Algorithm, 1+len(s.FixityIDs))
+	algs[0], err = digest.DefaultRegistry().Get(s.AlgID)
+	if err != nil {
+		return nil, err
+	}
+	for i, algID := range s.FixityIDs {
+		algs[i+1], err = digest.DefaultRegistry().Get(algID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return algs, nil
 }
 
-// AddFile adds a digestsed file to the stage as logical path.
-func (stage *LocalStage) AddFile(logicalPath string, digests *ocfl.FileDigests, localDir string, logger *slog.Logger) error {
+func (s *LocalStage) AddFile(localPath string, logicalPath string, logger *slog.Logger) error {
+	if !filepath.IsAbs(localPath) {
+		absPath, err := filepath.Abs(localPath)
+		if err != nil {
+			return err
+		}
+		localPath = absPath
+	}
+	algs, err := s.Algs()
+	if err != nil {
+		return err
+	}
+	digester := digest.NewMultiDigester(algs...)
+	f, err := os.Open(localPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := io.Copy(digester, f); err != nil {
+		return err
+	}
+	digester.Sums()
+}
+
+// Add adds a digestsed file to the stage as logical path.
+func (stage *LocalStage) add(logicalPath string, digests *ocfl.FileDigests, localDir string, logger *slog.Logger) error {
+
+	oldDigest := stage.NewState[logicalPath]
+	newDigest := digests.Digests.Delete(digests.Algorithm.ID())
+	if oldDigest != newDigest {
+		stage.NewState[logicalPath] = newDigest
+		switch {
+		case oldDigest == "":
+			logger.Info("new file", "path", logicalPath)
+		default:
+			logger.Info("updated file", "path", logicalPath)
+		}
+	}
+	if len(digests.Digests) > 0 {
+		stage.NewFixity[newDigest] = digests.Digests
+	}
+	alreadyCommitted := slices.Contains(stage.ExistingContent, newDigest)
+	_, alreadyStaged := stage.NewContent[newDigest]
+	if !alreadyCommitted && !alreadyStaged {
+		stage.NewContent[newDigest] = LocalFile{
+			LocalDir:  localDir,
+			LocalPath: digests.FullPath(),
+			Size:      digests.Info.Size(),
+			Modtime:   digests.Info.ModTime(),
+		}
+	}
+	return nil
+}
+
+// Add adds a digestsed file to the stage as logical path.
+func (stage *LocalStage) Add(logicalPath string, digests *ocfl.FileDigests, localDir string, logger *slog.Logger) error {
+
 	oldDigest := stage.NewState[logicalPath]
 	newDigest := digests.Digests.Delete(digests.Algorithm.ID())
 	if oldDigest != newDigest {
@@ -126,7 +198,7 @@ func (s *LocalStage) BuildCommit() (*ocfl.Commit, error) {
 	if err := state.Valid(); err != nil {
 		return nil, err
 	}
-	alg, err := s.Alg()
+	algs, err := s.Algs()
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +206,7 @@ func (s *LocalStage) BuildCommit() (*ocfl.Commit, error) {
 		ID: s.ID,
 		Stage: &ocfl.Stage{
 			State:           state,
-			DigestAlgorithm: alg,
+			DigestAlgorithm: algs[0],
 			ContentSource:   s,
 			FixitySource:    s,
 		},
