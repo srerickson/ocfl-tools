@@ -62,6 +62,8 @@ export AWS_SECRET_ACCESS_KEY="..."
 
 ## Installation
 
+Using Homebrew: `brew install srerickson/ocfl-tools/ocfl`
+
 You can also build and install `ocfl` locally using [Go](https://go.dev/dl) (v1.23 or greater):
 
 ```sh
