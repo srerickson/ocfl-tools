@@ -2,6 +2,7 @@ package util
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -17,9 +18,13 @@ import (
 // to set non-standard digest algorithm if the object does not exist. newID is
 // for the id on an object if it doesn't exist (The ocfl-go Object api should
 // really support this, but not yet: https://github.com/srerickson/ocfl-go/issues/114)
-func NewLocalStage(obj *ocfl.Object, newID string, newAlg string) (*LocalStage, error) {
+func NewLocalStage(obj *ocfl.Object, newAlg string) (*LocalStage, error) {
+	objID := obj.ID()
+	if objID == "" {
+		return nil, errors.New("object ID not set")
+	}
 	var stage = &LocalStage{
-		ID:              newID,
+		ID:              obj.ID(),
 		Version:         ocfl.V(1),
 		NewState:        ocfl.PathMap{},
 		NewFixity:       map[string]digest.Set{},
@@ -56,7 +61,7 @@ func ReadStageFile(name string) (*LocalStage, error) {
 
 type LocalStage struct {
 	// Object ID
-	ID string
+	ID string `json:"object_id"`
 
 	// number of new object version
 	Version ocfl.VNum
@@ -121,30 +126,29 @@ func (s *LocalStage) AddFile(localPath string, logicalPath string, logger *slog.
 }
 
 // Add adds a digestsed file to the stage as logical path.
-func (stage *LocalStage) add(logicalPath string, digests *ocfl.FileDigests, localDir string, logger *slog.Logger) error {
+func (stage *LocalStage) add(logicalPath, local string, digests digest.Set) error {
 
 	oldDigest := stage.NewState[logicalPath]
-	newDigest := digests.Digests.Delete(digests.Algorithm.ID())
+	newDigest := digests.Delete(stage.AlgID)
 	if oldDigest != newDigest {
 		stage.NewState[logicalPath] = newDigest
-		switch {
-		case oldDigest == "":
-			logger.Info("new file", "path", logicalPath)
-		default:
-			logger.Info("updated file", "path", logicalPath)
-		}
+		// switch {
+		// case oldDigest == "":
+		// 	logger.Info("new file", "path", logicalPath)
+		// default:
+		// 	logger.Info("updated file", "path", logicalPath)
+		// }
 	}
-	if len(digests.Digests) > 0 {
-		stage.NewFixity[newDigest] = digests.Digests
+	if len(digests) > 0 {
+		stage.NewFixity[newDigest] = digests
 	}
 	alreadyCommitted := slices.Contains(stage.ExistingContent, newDigest)
 	_, alreadyStaged := stage.NewContent[newDigest]
 	if !alreadyCommitted && !alreadyStaged {
 		stage.NewContent[newDigest] = LocalFile{
-			LocalDir:  localDir,
-			LocalPath: digests.FullPath(),
-			Size:      digests.Info.Size(),
-			Modtime:   digests.Info.ModTime(),
+			Path:    local,
+			Size:    digests.Info.Size(),
+			Modtime: digests.Info.ModTime(),
 		}
 	}
 	return nil
@@ -171,10 +175,10 @@ func (stage *LocalStage) Add(logicalPath string, digests *ocfl.FileDigests, loca
 	_, alreadyStaged := stage.NewContent[newDigest]
 	if !alreadyCommitted && !alreadyStaged {
 		stage.NewContent[newDigest] = LocalFile{
-			LocalDir:  localDir,
-			LocalPath: digests.FullPath(),
-			Size:      digests.Info.Size(),
-			Modtime:   digests.Info.ModTime(),
+			LocalDir: localDir,
+			Path:     digests.FullPath(),
+			Size:     digests.Info.Size(),
+			Modtime:  digests.Info.ModTime(),
 		}
 	}
 	return nil
@@ -219,7 +223,8 @@ func (s LocalStage) GetContent(digest string) (ocfl.FS, string) {
 	if !exists {
 		return nil, ""
 	}
-	return ocfl.DirFS(localFile.LocalDir), localFile.LocalPath
+	dir
+	return ocfl.DirFS(localFile.LocalDir), localFile.Path
 }
 
 // stage implements ocfl.FixitySource
@@ -228,8 +233,7 @@ func (s LocalStage) GetFixity(digest string) digest.Set {
 }
 
 type LocalFile struct {
-	LocalDir  string    `json:"local"`
-	LocalPath string    `json:"path"`
-	Size      int64     `json:"size"`
-	Modtime   time.Time `json:"modtime"`
+	Path    string    `json:"path"`
+	Size    int64     `json:"size"`
+	Modtime time.Time `json:"modtime"`
 }
