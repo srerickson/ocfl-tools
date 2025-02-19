@@ -7,7 +7,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/srerickson/ocfl-go"
@@ -51,7 +50,7 @@ func (cmd *NewStageCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	stage, err := util.NewLocalStage(obj, cmd.ID, cmd.Alg)
+	stage, err := util.NewLocalStage(obj, cmd.Alg)
 	if err != nil {
 		return err
 	}
@@ -78,61 +77,35 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 	if cmd.As != "" && !fs.ValidPath(cmd.As) {
 		return fmt.Errorf("invalid logical path for new content: %s", cmd.As)
 	}
-	jobs := cmd.Jobs
-	if jobs < 1 {
-		jobs = runtime.NumCPU()
-	}
-	alg, err := stage.Alg()
-	if err != nil {
-		return err
-	}
+	// jobs := cmd.Jobs
+	// if jobs < 1 {
+	// 	jobs = runtime.NumCPU()
+	// }
 	absPath, err := filepath.Abs(cmd.Path)
 	if err != nil {
 		return err
 	}
-	ftype, err := getFileType(absPath)
+	// get file type
+	info, err := os.Stat(absPath)
 	if err != nil {
 		return err
 	}
+	ftype := info.Mode().Type()
 	switch {
 	case ftype.IsDir():
-		fsys := ocfl.DirFS(absPath)
-		as := "."
-		if cmd.As != "" {
-			as = cmd.As
+		logical := cmd.As
+		if logical == "" {
+			logical = "."
 		}
-		files, walkErr := ocfl.WalkFiles(ctx, fsys, ".")
-		digestsSeq := files.IgnoreHidden().DigestBatch(ctx, jobs, alg)
-		for digests, err := range digestsSeq {
-			if err != nil {
-				return err
-			}
-			statePath := path.Join(as, digests.FullPath())
-			if err := stage.Add(statePath, digests, absPath, g.logger); err != nil {
-				return err
-			}
-		}
-		if err := walkErr(); err != nil {
-			return fmt.Errorf("while walking directory tree: %w", err)
+		if err := stage.AddDir(ctx, absPath, logical, false); err != nil {
+			return err
 		}
 	case ftype.IsRegular():
-		localDir := filepath.Dir(absPath)
-		fsys := ocfl.DirFS(localDir)
-		base := filepath.Base(absPath)
-		statePath := base
-		if cmd.As != "" {
-			statePath = cmd.As
+		logical := cmd.As
+		if logical == "" {
+			logical = filepath.Base(cmd.Path)
 		}
-		fileSeq, errFn := ocfl.Files(fsys, base).Stat(ctx).UntilErr()
-		for digests, err := range fileSeq.Digest(ctx, alg) {
-			if err != nil {
-				return err
-			}
-			if err := stage.Add(statePath, digests, localDir, g.logger); err != nil {
-				return err
-			}
-		}
-		if err := errFn(); err != nil {
+		if err := stage.AddFile(absPath, logical); err != nil {
 			return err
 		}
 	default:
@@ -250,12 +223,4 @@ func (cmd *StageRmCmd) Run(g *globals) error {
 		return err
 	}
 	return nil
-}
-
-func getFileType(name string) (fs.FileMode, error) {
-	info, err := os.Stat(name)
-	if err != nil {
-		return 0, err
-	}
-	return info.Mode().Type(), nil
 }
