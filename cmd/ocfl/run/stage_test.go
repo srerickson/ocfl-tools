@@ -11,7 +11,8 @@ import (
 )
 
 func TestStage(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir, fixtures := testutil.TempDirTestData(t, `testdata/content-fixture`)
+	contentFixture := fixtures[0]
 	rootPath := filepath.Join(tmpDir, "ocfl")
 	stagePath := filepath.Join(tmpDir, "my-stage.json")
 	objID := "ark://my-object-01"
@@ -90,11 +91,15 @@ func TestStage(t *testing.T) {
 }
 
 func TestStageRm(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir, fixtures := testutil.TempDirTestData(t,
+		`testdata/content-fixture`,
+		`testdata/store-fixtures/1.0/good-stores/reg-extension-dir-root`,
+	)
+	contentFixture := fixtures[0]
+	ocflPath := fixtures[1]
 	stagePath := filepath.Join(tmpDir, "my-stage.json")
-	rootPath := filepath.Join(goodStoreFixtures, `reg-extension-dir-root`)
 	contentFile := filepath.Join(contentFixture, "hello.csv")
-	env := map[string]string{"OCFL_ROOT": rootPath}
+	env := map[string]string{"OCFL_ROOT": ocflPath}
 	objID := "ark:123/abc"
 	cmd := []string{"stage", "new", "--file", stagePath, "--ocflv", "1.0", "--alg", "sha256", objID}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
@@ -137,7 +142,10 @@ func TestStageRm(t *testing.T) {
 }
 
 func TestStageCommit(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir, fixtures := testutil.TempDirTestData(t,
+		`testdata/content-fixture`,
+	)
+	contentFixture := fixtures[0]
 	rootPath := filepath.Join(tmpDir, "ocfl")
 	stagePath := filepath.Join(tmpDir, "my-stage.json")
 	objID := "ark://my-object-01"

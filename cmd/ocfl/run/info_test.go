@@ -9,6 +9,12 @@ import (
 )
 
 func TestInfo(t *testing.T) {
+	_, fixtures := testutil.TempDirTestData(t,
+		"testdata/store-fixtures/1.0/good-stores",
+		"testdata/object-fixtures/1.1/good-objects",
+	)
+	goodStoreFixtures := fixtures[0]
+	goodObjectFixtures := fixtures[1]
 	t.Run("storage root with layout", func(t *testing.T) {
 		args := []string{`info`, `--root`, filepath.Join(goodStoreFixtures, `reg-extension-dir-root`)}
 		testutil.RunCLI(args, nil, func(err error, stdout string, stderr string) {

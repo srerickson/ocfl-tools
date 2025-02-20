@@ -9,6 +9,16 @@ import (
 )
 
 func TestValidate(t *testing.T) {
+	_, fixtures := testutil.TempDirTestData(t,
+		`testdata/object-fixtures/1.1/good-objects`,
+		`testdata/object-fixtures/1.1/bad-objects`,
+		`testdata/store-fixtures/1.0/good-stores`,
+		`testdata/store-fixtures/1.0/bad-stores`,
+	)
+	goodObjectFixtures := fixtures[0]
+	badObjectFixtures := fixtures[1]
+	goodStoreFixtures := fixtures[2]
+	badStoreFixtures := fixtures[3]
 	t.Run("object fixtures", func(t *testing.T) {
 		// bad object
 		obj := filepath.Join(badObjectFixtures, `E010_missing_versions`)
