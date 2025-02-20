@@ -1,6 +1,6 @@
 package run
 
-import "github.com/srerickson/ocfl-tools/cmd/ocfl/internal/util"
+import "github.com/srerickson/ocfl-tools/cmd/ocfl/internal/stage"
 
 const commitHelp = "Create or update an object using contents of a local directory"
 
@@ -23,7 +23,7 @@ func (cmd *CommitCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	stage, err := util.NewLocalStage(obj, cmd.Alg)
+	stage, err := stage.NewStageFile(obj, cmd.Alg)
 	if err != nil {
 		return err
 	}

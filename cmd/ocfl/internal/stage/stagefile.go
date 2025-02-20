@@ -1,4 +1,4 @@
-package util
+package stage
 
 import (
 	"context"
@@ -18,52 +18,56 @@ import (
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
+	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/util"
 )
 
-type LocalStage struct {
+// StageFile reprepresent a local stage file for building updates
+// to OCFL ojects.
+type StageFile struct {
 	// Object ID
 	ID string `json:"object_id"`
 
 	// number of new object version
-	Version ocfl.VNum
+	NextHead ocfl.VNum `json:"next_head"`
 
 	// State for new object versions
-	NewState ocfl.PathMap
+	NextState ocfl.PathMap `json:"next_state"`
 
 	// digests that are already part of the object, don't need to be uploaded.
-	ExistingContent []string
+	ExistingDigests []string `json:"existing"`
 
 	// Primary digest algorithm (sha512 or sha256)
-	AlgID string
+	AlgID string `json:"digest_algorithm"`
+
+	// LocalContent maps (primary) digest values to local files
+	LocalContent map[string]*LocalFile `json:"local_content"`
 
 	// Fixity Algorithms
-	FixityIDs []string
+	FixityIDs []string `json:"fixity_algorithms"`
 
-	// NewContent maps (primary) digest values to local files
-	NewContent map[string]*LocalFile
+	// Fixity maps digests to alternate digests (for new content)
+	Fixity map[string]digest.Set `json:"fixity"`
 
-	// NewFixity maps digests to alternate digests (for new content)
-	NewFixity map[string]digest.Set
-
+	// optional logger
 	logger *slog.Logger
 }
 
-// NewLocalStage creates a new stage for the object. The newAlg argument can be used
+// NewStageFile creates a new stage for the object. The newAlg argument can be used
 // to set non-standard digest algorithm if the object does not exist. newID is
 // for the id on an object if it doesn't exist (The ocfl-go Object api should
 // really support this, but not yet: https://github.com/srerickson/ocfl-go/issues/114)
-func NewLocalStage(obj *ocfl.Object, newAlg string) (*LocalStage, error) {
+func NewStageFile(obj *ocfl.Object, newAlg string) (*StageFile, error) {
 	objID := obj.ID()
 	if objID == "" {
 		return nil, errors.New("object ID not set")
 	}
-	var stage = &LocalStage{
+	var stage = &StageFile{
 		ID:              obj.ID(),
-		Version:         ocfl.V(1),
-		NewState:        ocfl.PathMap{},
-		NewFixity:       map[string]digest.Set{},
-		ExistingContent: []string{},
-		NewContent:      map[string]*LocalFile{},
+		NextHead:        ocfl.V(1),
+		NextState:       ocfl.PathMap{},
+		Fixity:          map[string]digest.Set{},
+		ExistingDigests: []string{},
+		LocalContent:    map[string]*LocalFile{},
 		AlgID:           newAlg,
 	}
 	if obj.Exists() {
@@ -72,16 +76,16 @@ func NewLocalStage(obj *ocfl.Object, newAlg string) (*LocalStage, error) {
 		if err != nil {
 			return nil, err
 		}
-		stage.Version = next
-		stage.NewState = inv.Version(0).State().PathMap()
+		stage.NextHead = next
+		stage.NextState = inv.Version(0).State().PathMap()
 		stage.AlgID = inv.DigestAlgorithm().ID()
-		stage.ExistingContent = inv.Manifest().Digests()
+		stage.ExistingDigests = inv.Manifest().Digests()
 	}
 	return stage, nil
 }
 
-func ReadStageFile(name string) (*LocalStage, error) {
-	var stage LocalStage
+func ReadStageFile(name string) (*StageFile, error) {
+	var stage StageFile
 	bytes, err := os.ReadFile(name)
 	if err != nil {
 		// have you created
@@ -93,7 +97,9 @@ func ReadStageFile(name string) (*LocalStage, error) {
 	return &stage, nil
 }
 
-func (s LocalStage) Algs() ([]digest.Algorithm, error) {
+// Algs returns the stage's digest algorithms as a slice. The primary algorithm
+// is first, the rest are fixity.
+func (s StageFile) Algs() ([]digest.Algorithm, error) {
 	var err error
 	algs := make([]digest.Algorithm, 1+len(s.FixityIDs))
 	algs[0], err = digest.DefaultRegistry().Get(s.AlgID)
@@ -109,7 +115,9 @@ func (s LocalStage) Algs() ([]digest.Algorithm, error) {
 	return algs, nil
 }
 
-func (s *LocalStage) AddFile(localPath string, as string) error {
+// AddFile digests a local file and adds it to the stage using the file's
+// basename or 'as'.
+func (s *StageFile) AddFile(localPath string, as string) error {
 	if !filepath.IsAbs(localPath) {
 		absPath, err := filepath.Abs(localPath)
 		if err != nil {
@@ -152,9 +160,14 @@ func (s *LocalStage) AddFile(localPath string, as string) error {
 	return nil
 }
 
-// AddDir walks files in a localDir, digesting them and adds them to the new
-// stage state under an optional logical directory 'as', which defaults to ".".
-func (s *LocalStage) AddDir(ctx context.Context, localDir, as string, withHidden bool, remove bool, jobs int) error {
+// AddDir walks files in a localDir and generates digests for files using the
+// stage's digest algorithm. File names are added to the stage state under a the
+// directory 'as' which defaults to the logical root for the object. Hidden
+// files and directories are ignored unless withHidden is true. if remove is
+// true, staged files under 'as' are removed from the stage state if they are
+// not found in localDir. The number of concurrent digest worker goroutines is
+// set with gos.
+func (s *StageFile) AddDir(ctx context.Context, localDir, as string, withHidden bool, remove bool, gos int) error {
 	if !filepath.IsAbs(localDir) {
 		absLocalDir, err := filepath.Abs(localDir)
 		if err != nil {
@@ -169,8 +182,8 @@ func (s *LocalStage) AddDir(ctx context.Context, localDir, as string, withHidden
 		return fmt.Errorf("invalid directory name: %s", as)
 	}
 	localFS := ocfl.DirFS(localDir)
-	if jobs < 1 {
-		jobs = runtime.NumCPU()
+	if gos < 1 {
+		gos = runtime.NumCPU()
 	}
 	algs, err := s.Algs()
 	if err != nil {
@@ -185,7 +198,7 @@ func (s *LocalStage) AddDir(ctx context.Context, localDir, as string, withHidden
 	if !withHidden {
 		filesIter = filesIter.IgnoreHidden()
 	}
-	for result, err := range filesIter.DigestBatch(ctx, jobs, alg, fixity...) {
+	for result, err := range filesIter.DigestBatch(ctx, gos, alg, fixity...) {
 		if err != nil {
 			return err
 		}
@@ -206,7 +219,7 @@ func (s *LocalStage) AddDir(ctx context.Context, localDir, as string, withHidden
 		return nil
 	}
 	// remove files in new state (under 'as') that aren't in localDir
-	for p := range s.NewState {
+	for p := range s.NextState {
 		statName := p
 		if as != "." {
 			if !strings.HasPrefix(p, as+"/") {
@@ -220,9 +233,9 @@ func (s *LocalStage) AddDir(ctx context.Context, localDir, as string, withHidden
 			continue
 		}
 		if errors.Is(err, fs.ErrNotExist) {
-			delete(s.NewState, p)
+			delete(s.NextState, p)
 			if s.logger != nil {
-				s.logger.Info("removed", "path", p)
+				s.logger.Info("file removed", "path", p)
 			}
 			continue
 		}
@@ -232,8 +245,8 @@ func (s *LocalStage) AddDir(ctx context.Context, localDir, as string, withHidden
 	return nil
 }
 
-// Write the LocalStage to file name as json
-func (s LocalStage) Write(name string) error {
+// Write s to file name as json
+func (s StageFile) Write(name string) error {
 	stageBytes, err := json.Marshal(s)
 	if err != nil {
 		return err
@@ -244,8 +257,8 @@ func (s LocalStage) Write(name string) error {
 	return nil
 }
 
-// BuildCommit returns s as an ocfl.BuildCommit
-func (s *LocalStage) BuildCommit(name, email, message string) (*ocfl.Commit, error) {
+// BuildCommit returns an ocfl.Commit baesd on stage state.
+func (s *StageFile) BuildCommit(name, email, message string) (*ocfl.Commit, error) {
 	if name == "" {
 		return nil, fmt.Errorf("a name is required for the new object version")
 	}
@@ -255,7 +268,7 @@ func (s *LocalStage) BuildCommit(name, email, message string) (*ocfl.Commit, err
 	if email != "" && !strings.HasPrefix(`email:`, email) {
 		email = "email:" + email
 	}
-	state := s.NewState.DigestMap()
+	state := s.NextState.DigestMap()
 	if err := state.Valid(); err != nil {
 		return nil, err
 	}
@@ -280,8 +293,8 @@ func (s *LocalStage) BuildCommit(name, email, message string) (*ocfl.Commit, err
 }
 
 // stage implements ocfl.ContentSource
-func (s LocalStage) GetContent(digest string) (ocfl.FS, string) {
-	localFile := s.NewContent[digest]
+func (s StageFile) GetContent(digest string) (ocfl.FS, string) {
+	localFile := s.LocalContent[digest]
 	if localFile == nil {
 		return nil, ""
 	}
@@ -291,12 +304,13 @@ func (s LocalStage) GetContent(digest string) (ocfl.FS, string) {
 }
 
 // stage implements ocfl.FixitySource
-func (s LocalStage) GetFixity(digest string) digest.Set {
-	return s.NewFixity[digest]
+func (s StageFile) GetFixity(digest string) digest.Set {
+	return s.Fixity[digest]
 }
 
-func (s *LocalStage) List(w io.Writer, withDigests bool) {
-	for p, digest := range pathMapEachPath(s.NewState) {
+// Write a list of filenames to the writer
+func (s *StageFile) List(w io.Writer, withDigests bool) {
+	for p, digest := range util.PathMapEachPath(s.NextState) {
 		if withDigests {
 			fmt.Fprintln(w, digest, p)
 			continue
@@ -305,19 +319,21 @@ func (s *LocalStage) List(w io.Writer, withDigests bool) {
 	}
 }
 
-func (s *LocalStage) Remove(logicalPath string, recursive bool) error {
+// Remove removes logicalPath from the stage state. If recursive is true,
+// logicalPath is treated as a directory and all files under it are removed.
+func (s *StageFile) Remove(logicalPath string, recursive bool) error {
 	toDelete := path.Clean(logicalPath)
 	switch {
 	case recursive && toDelete == ".":
 		// delete everything
-		s.NewState = ocfl.PathMap{}
+		s.NextState = ocfl.PathMap{}
 	default:
-		for p := range pathMapEachPath(s.NewState) {
+		for p := range util.PathMapEachPath(s.NextState) {
 			recursiveMatch := recursive && (strings.HasPrefix(p, toDelete+"/"))
 			if p == toDelete || recursiveMatch {
-				delete(s.NewState, p)
+				delete(s.NextState, p)
 				if s.logger != nil {
-					s.logger.Info("removed", "path", p)
+					s.logger.Info("file removed", "path", p)
 				}
 			}
 		}
@@ -325,24 +341,31 @@ func (s *LocalStage) Remove(logicalPath string, recursive bool) error {
 	return nil
 }
 
-func (s *LocalStage) SetLogger(l *slog.Logger) {
+func (s *StageFile) SetLogger(l *slog.Logger) {
 	s.logger = l
 }
 
 // Add adds a digestsed file to the stage as logical path.
-func (s *LocalStage) add(logical string, local *LocalFile, digests digest.Set) {
-	prevDigest := s.NewState[logical]
+func (s *StageFile) add(logical string, local *LocalFile, digests digest.Set) {
+	prevDigest := s.NextState[logical]
 	newDigest := digests.Delete(s.AlgID)
 	if prevDigest != newDigest {
-		s.NewState[logical] = newDigest
+		if s.logger != nil {
+			action := "file added"
+			if prevDigest != "" {
+				action = "file updated"
+			}
+			s.logger.Info(action, "path", logical)
+		}
+		s.NextState[logical] = newDigest
 	}
 	if len(digests) > 0 {
-		s.NewFixity[newDigest] = digests
+		s.Fixity[newDigest] = digests
 	}
-	alreadyCommitted := slices.Contains(s.ExistingContent, newDigest)
-	_, alreadyStaged := s.NewContent[newDigest]
+	alreadyCommitted := slices.Contains(s.ExistingDigests, newDigest)
+	_, alreadyStaged := s.LocalContent[newDigest]
 	if !alreadyCommitted && !alreadyStaged {
-		s.NewContent[newDigest] = local
+		s.LocalContent[newDigest] = local
 	}
 }
 

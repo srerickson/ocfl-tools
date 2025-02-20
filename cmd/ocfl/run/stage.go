@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/util"
+	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/stage"
 )
 
 const (
@@ -34,7 +34,7 @@ type NewStageCmd struct {
 }
 
 func (cmd *NewStageCmd) Run(g *globals) error {
-	if _, err := util.ReadStageFile(cmd.File); err == nil {
+	if _, err := stage.ReadStageFile(cmd.File); err == nil {
 		err := fmt.Errorf("stage file already exists: %s", cmd.File)
 		return err
 	}
@@ -46,14 +46,14 @@ func (cmd *NewStageCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	stage, err := util.NewLocalStage(obj, cmd.Alg)
+	stage, err := stage.NewStageFile(obj, cmd.Alg)
 	if err != nil {
 		return err
 	}
 	if err := stage.Write(cmd.File); err != nil {
 		return err
 	}
-	g.logger.Info("stage file created", "path", cmd.File, "object_id", stage.ID, "object_version", stage.Version)
+	g.logger.Info("stage file created", "path", cmd.File, "object_id", stage.ID, "object_version", stage.NextHead)
 	return nil
 }
 
@@ -68,7 +68,7 @@ type StageAddCmd struct {
 
 func (cmd *StageAddCmd) Run(g *globals) error {
 	ctx := g.ctx
-	stage, err := util.ReadStageFile(cmd.File)
+	stage, err := stage.ReadStageFile(cmd.File)
 	if err != nil {
 		return err
 	}
@@ -113,7 +113,7 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	stage, err := util.ReadStageFile(cmd.File)
+	stage, err := stage.ReadStageFile(cmd.File)
 	if err != nil {
 		return err
 	}
@@ -147,7 +147,7 @@ type StageListCmd struct {
 }
 
 func (cmd *StageListCmd) Run(g *globals) error {
-	stage, err := util.ReadStageFile(cmd.File)
+	stage, err := stage.ReadStageFile(cmd.File)
 	if err != nil {
 		return err
 	}
@@ -164,7 +164,7 @@ type StageRmCmd struct {
 }
 
 func (cmd *StageRmCmd) Run(g *globals) error {
-	stage, err := util.ReadStageFile(cmd.File)
+	stage, err := stage.ReadStageFile(cmd.File)
 	if err != nil {
 		return err
 	}
