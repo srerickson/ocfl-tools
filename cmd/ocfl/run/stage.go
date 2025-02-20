@@ -3,13 +3,9 @@ package run
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
-	"strings"
 
-	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/util"
 )
 
@@ -63,9 +59,11 @@ func (cmd *NewStageCmd) Run(g *globals) error {
 
 type StageAddCmd struct {
 	stageCmdBase
-	Jobs int    `name:"jobs" short:"j" default:"0" help:"number of files to digest concurrently. Defaults to number of CPUs."`
-	As   string `name:"as" help:"logical name for the new content. Default: base name if path is a file; '.' if path is a directory."`
-	Path string `arg:"" help:"file or parent directory for content to add to the stage"`
+	All    bool   `name:"all" help:"include hidden files (.*) in path. Ignored if path is a file."`
+	As     string `name:"as" help:"logical name for the new content. Default: base name if path is a file; '.' if path is a directory."`
+	Jobs   int    `name:"jobs" short:"j" default:"0" help:"number of files to digest concurrently. Defaults to the number of CPU cores."`
+	Remove bool   `name:"rm" help:"also remove staged files not found in the path. Ignored if path is a file."`
+	Path   string `arg:"" help:"file or parent directory for content to add to the stage"`
 }
 
 func (cmd *StageAddCmd) Run(g *globals) error {
@@ -74,13 +72,7 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	if cmd.As != "" && !fs.ValidPath(cmd.As) {
-		return fmt.Errorf("invalid logical path for new content: %s", cmd.As)
-	}
-	// jobs := cmd.Jobs
-	// if jobs < 1 {
-	// 	jobs = runtime.NumCPU()
-	// }
+	stage.SetLogger(g.logger)
 	absPath, err := filepath.Abs(cmd.Path)
 	if err != nil {
 		return err
@@ -93,23 +85,14 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 	ftype := info.Mode().Type()
 	switch {
 	case ftype.IsDir():
-		logical := cmd.As
-		if logical == "" {
-			logical = "."
-		}
-		if err := stage.AddDir(ctx, absPath, logical, false); err != nil {
-			return err
-		}
+		err = stage.AddDir(ctx, absPath, cmd.As, cmd.All, cmd.Remove, cmd.Jobs)
 	case ftype.IsRegular():
-		logical := cmd.As
-		if logical == "" {
-			logical = filepath.Base(cmd.Path)
-		}
-		if err := stage.AddFile(absPath, logical); err != nil {
-			return err
-		}
+		err = stage.AddFile(absPath, cmd.As)
 	default:
-		return errors.New("path has unsupported file type")
+		err = errors.New("unsupported file type for: " + absPath)
+	}
+	if err != nil {
+		return err
 	}
 	if err := stage.Write(cmd.File); err != nil {
 		return err
@@ -134,36 +117,20 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
+	stage.SetLogger(g.logger)
 	obj, err := root.NewObject(g.ctx, stage.ID)
 	if err != nil {
 		return err
 	}
-	if cmd.Message == "" {
-		return fmt.Errorf("a message is required for the new object version")
+	if cmd.Name == "" {
+		cmd.Name = g.getenv(envVarUserName)
 	}
-	userName := cmd.Name
-	if userName == "" {
-		userName = g.getenv(envVarUserName)
+	if cmd.Email == "" {
+		cmd.Email = g.getenv(envVarUserEmail)
 	}
-	if userName == "" {
-		return fmt.Errorf("a name is required for the new object version")
-	}
-	userEmail := cmd.Email
-	if userEmail == "" {
-		userEmail = g.getenv(envVarUserEmail)
-	}
-	if userEmail != "" {
-		// make address a valid uri
-		userEmail = "email:" + userEmail
-	}
-	commit, err := stage.BuildCommit()
+	commit, err := stage.BuildCommit(cmd.Name, cmd.Email, cmd.Message)
 	if err != nil {
 		return fmt.Errorf("stage has errors: %w", err)
-	}
-	commit.Message = cmd.Message
-	commit.User = ocfl.User{
-		Name:    userName,
-		Address: userEmail,
 	}
 	if err := obj.Commit(ctx, commit); err != nil {
 		return fmt.Errorf("creating new object version: %w", err)
@@ -184,13 +151,8 @@ func (cmd *StageListCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	for p, digest := range util.PathMapEachPath(stage.NewState) {
-		if cmd.WithDigests {
-			fmt.Fprintln(g.stdout, digest, p)
-			continue
-		}
-		fmt.Fprintln(g.stdout, p)
-	}
+	stage.SetLogger(g.logger)
+	stage.List(g.stdout, cmd.WithDigests)
 	return nil
 }
 
@@ -206,18 +168,9 @@ func (cmd *StageRmCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	toDelete := path.Clean(cmd.Path)
-	switch {
-	case cmd.Recursive && toDelete == ".":
-		stage.NewState = ocfl.PathMap{}
-	default:
-		for p := range util.PathMapEachPath(stage.NewState) {
-			recursiveMatch := cmd.Recursive && (strings.HasPrefix(p, toDelete+"/") || toDelete == ".")
-			if p == toDelete || recursiveMatch {
-				delete(stage.NewState, p)
-				g.logger.Info("removed", "path", p)
-			}
-		}
+	stage.SetLogger(g.logger)
+	if err := stage.Remove(cmd.Path, cmd.Recursive); err != nil {
+		return err
 	}
 	if err := stage.Write(cmd.File); err != nil {
 		return err

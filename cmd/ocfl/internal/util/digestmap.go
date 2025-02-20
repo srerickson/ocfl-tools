@@ -9,10 +9,10 @@ import (
 )
 
 func EachPath(m ocfl.DigestMap) iter.Seq2[string, string] {
-	return PathMapEachPath(m.PathMap())
+	return pathMapEachPath(m.PathMap())
 }
 
-func PathMapEachPath(pm ocfl.PathMap) iter.Seq2[string, string] {
+func pathMapEachPath(pm ocfl.PathMap) iter.Seq2[string, string] {
 	return func(yield func(string, string) bool) {
 		paths := slices.Collect(maps.Keys(pm))
 		slices.Sort(paths)
