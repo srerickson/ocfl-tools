@@ -1,9 +1,6 @@
 package run
 
-import (
-	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/digest"
-)
+import "github.com/srerickson/ocfl-tools/cmd/ocfl/internal/stage"
 
 const commitHelp = "Create or update an object using contents of a local directory"
 
@@ -17,39 +14,32 @@ type CommitCmd struct {
 }
 
 func (cmd *CommitCmd) Run(g *globals) error {
+	ctx := g.ctx
 	root, err := g.getRoot()
 	if err != nil {
 		return err
 	}
-	readFS := ocfl.DirFS(cmd.Path)
 	obj, err := root.NewObject(g.ctx, cmd.ID)
 	if err != nil {
 		return err
 	}
-	alg, err := digest.DefaultRegistry().Get(cmd.Alg)
+	stage, err := stage.NewStageFile(obj, cmd.Alg)
 	if err != nil {
 		return err
 	}
-	if obj.Exists() {
-		// use existing object's digest algorithm
-		alg = obj.Inventory().DigestAlgorithm()
+	stage.SetLogger(g.logger)
+	if err := stage.AddDir(ctx, cmd.Path, ".", false, true, 0); err != nil {
+		return err
 	}
-	stage, err := ocfl.StageDir(g.ctx, readFS, ".", alg)
+	if cmd.Name == "" {
+		cmd.Name = g.getenv(envVarUserName)
+	}
+	if cmd.Email == "" {
+		cmd.Email = g.getenv(envVarUserEmail)
+	}
+	commit, err := stage.BuildCommit(cmd.Name, cmd.Email, cmd.Message)
 	if err != nil {
 		return err
 	}
-	userName := cmd.Name
-	if userName == "" {
-		userName = g.getenv(envVarUserName)
-	}
-	userEmail := cmd.Email
-	if userEmail == "" {
-		userEmail = g.getenv(envVarUserEmail)
-	}
-	return obj.Commit(g.ctx, &ocfl.Commit{
-		ID:      cmd.ID,
-		Stage:   stage,
-		Message: cmd.Message,
-		User:    ocfl.User{Name: userName, Address: userEmail},
-	})
+	return obj.Commit(ctx, commit)
 }
