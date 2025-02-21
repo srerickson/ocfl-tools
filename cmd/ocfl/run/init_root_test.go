@@ -1,6 +1,7 @@
 package run_test
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/carlmjohnson/be"
@@ -8,8 +9,11 @@ import (
 )
 
 func TestInitRoot(t *testing.T) {
+	tmpDirs, fixtures := testutil.TempDirTestData(t, `testdata/content-fixture`)
+	ocflRoot := filepath.Join(tmpDirs, `root`)
+	contentFixture := fixtures[0]
 	t.Run("existing OK", func(t *testing.T) {
-		env := map[string]string{"OCFL_ROOT": t.TempDir()}
+		env := map[string]string{"OCFL_ROOT": ocflRoot}
 		args := []string{"init-root"}
 		testutil.RunCLI(args, env, func(err error, stdout string, stderr string) {
 			be.NilErr(t, err) // ok the first time
@@ -58,7 +62,6 @@ func TestInitRoot(t *testing.T) {
 				return
 			}
 			// ocfl commit
-			// FIXME
 			objID := "object-01"
 			args = []string{
 				"commit",

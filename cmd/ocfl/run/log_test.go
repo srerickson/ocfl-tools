@@ -10,6 +10,12 @@ import (
 )
 
 func TestLog(t *testing.T) {
+	_, fixtures := testutil.TempDirTestData(t,
+		`testdata/store-fixtures/1.0/good-stores`,
+		`testdata/object-fixtures/1.1/good-objects`,
+	)
+	goodStoreFixtures := fixtures[0]
+	goodObjectFixtures := fixtures[1]
 	t.Run("--id", func(t *testing.T) {
 		env := map[string]string{
 			"OCFL_ROOT": filepath.Join(goodStoreFixtures, `reg-extension-dir-root`),
