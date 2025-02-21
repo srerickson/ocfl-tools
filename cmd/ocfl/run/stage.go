@@ -87,7 +87,7 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 	case ftype.IsDir():
 		opts := []stage.AddOption{
 			stage.AddAs(cmd.As),
-			stage.DigestJobs(cmd.Jobs),
+			stage.AddDigestJobs(cmd.Jobs),
 		}
 		if cmd.Remove {
 			opts = append(opts, stage.AddAndRemove())
@@ -97,7 +97,7 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 		}
 		err = changes.AddDir(ctx, absPath, opts...)
 	case ftype.IsRegular():
-		err = changes.AddFile(absPath, cmd.As)
+		err = changes.AddFile(absPath, stage.AddAs(cmd.As))
 	default:
 		err = errors.New("unsupported file type for: " + absPath)
 	}

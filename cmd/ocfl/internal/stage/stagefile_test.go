@@ -2,6 +2,9 @@ package stage_test
 
 import (
 	"context"
+	"maps"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/carlmjohnson/be"
@@ -27,8 +30,26 @@ func TestStageFile_AddDir(t *testing.T) {
 		t.Run("defaults", func(t *testing.T) {
 			changes, err := stage.NewStageFile(newObj, "sha512")
 			be.NilErr(t, err)
-			changes.AddDir(ctx, contentFixture)
+			err = changes.AddDir(ctx, contentFixture)
+			be.NilErr(t, err)
+			be.False(t, stageIncludesHidden(changes))
 		})
+
+		t.Run("with hidden", func(t *testing.T) {
+			changes, err := stage.NewStageFile(newObj, "sha512")
+			be.NilErr(t, err)
+			err = changes.AddDir(ctx, contentFixture, stage.AddWithHidden())
+			be.NilErr(t, err)
+			be.True(t, stageIncludesHidden(changes))
+		})
+
+		t.Run("with digest jobs", func(t *testing.T) {
+			changes, err := stage.NewStageFile(newObj, "sha512")
+			be.NilErr(t, err)
+			err = changes.AddDir(ctx, contentFixture, stage.AddDigestJobs(2))
+			be.NilErr(t, err)
+		})
+
 	})
 
 	t.Run("stage existing object", func(t *testing.T) {
@@ -63,4 +84,16 @@ func TestStageFile_AddDir(t *testing.T) {
 			be.Zero(t, changes.NextState[aFile])
 		})
 	})
+}
+
+func stageIncludesHidden(s *stage.StageFile) bool {
+	names := slices.Collect(maps.Keys(s.NextState))
+	for _, n := range names {
+		for _, part := range strings.Split(n, "/") {
+			if strings.HasPrefix(part, ".") {
+				return true
+			}
+		}
+	}
+	return false
 }

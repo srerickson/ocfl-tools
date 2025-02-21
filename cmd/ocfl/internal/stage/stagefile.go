@@ -116,8 +116,13 @@ func (s StageFile) Algs() ([]digest.Algorithm, error) {
 }
 
 // AddFile digests a local file and adds it to the stage using the file's
-// basename or 'as'.
-func (s *StageFile) AddFile(localPath string, as string) error {
+// basename. Use the [AddAs] option to change the logical name for the staged
+// file.
+func (s *StageFile) AddFile(localPath string, opts ...AddOption) error {
+	addConf := addConfig{as: filepath.Base(localPath)}
+	for _, o := range opts {
+		o(&addConf)
+	}
 	if !filepath.IsAbs(localPath) {
 		absPath, err := filepath.Abs(localPath)
 		if err != nil {
@@ -125,11 +130,8 @@ func (s *StageFile) AddFile(localPath string, as string) error {
 		}
 		localPath = absPath
 	}
-	if as == "" {
-		as = filepath.Base(localPath)
-	}
-	if as == "." || !fs.ValidPath(as) {
-		return fmt.Errorf("invalid file name: %s", as)
+	if addConf.as == "." || !fs.ValidPath(addConf.as) {
+		return fmt.Errorf("invalid file name: %s", addConf.as)
 	}
 	algs, err := s.Algs()
 	if err != nil {
@@ -156,7 +158,7 @@ func (s *StageFile) AddFile(localPath string, as string) error {
 		Size:    info.Size(),
 		Modtime: info.ModTime(),
 	}
-	s.add(as, localFile, digester.Sums())
+	s.add(addConf.as, localFile, digester.Sums())
 	return nil
 }
 
@@ -378,6 +380,10 @@ type LocalFile struct {
 	Modtime time.Time `json:"modtime"`
 }
 
+// AddOption is a function that can be used to configure the behavior of
+// [AddDir] or [AddFile]
+type AddOption func(c *addConfig)
+
 type addConfig struct {
 	as         string
 	withHidden bool
@@ -385,26 +391,36 @@ type addConfig struct {
 	gos        int
 }
 
-type AddOption func(c *addConfig)
-
+// AddAs sets the logical name for staged content. When used with [AddDir], name
+// is treated as a directory in which files from the source directory are added.
+// For [AddFile], name is treated as a logical filename.
 func AddAs(name string) AddOption {
 	return func(c *addConfig) {
 		c.as = name
 	}
 }
 
+// AddAndRemove is an option for [AddDir] to also remove files in the stage that
+// aren't included in the source directory. If used with [AddAs], only files
+// under the directory named with [AddAs] are removed. This option is ignored if
+// used with [AddFile].
 func AddAndRemove() AddOption {
 	return func(c *addConfig) {
 		c.remove = true
 	}
 }
 
+// AddWithHidden is an option for [AddDir] to included hidden files and directories
+// from the source directory. This options is ignored if used with [AddFile].
 func AddWithHidden() AddOption {
 	return func(c *addConfig) {
 		c.withHidden = true
 	}
 }
-func DigestJobs(num int) AddOption {
+
+// AddDigestJobs is an option for [AddDir] that sets the number of goroutines used
+// to digest files in the source directory.
+func AddDigestJobs(num int) AddOption {
 	return func(c *addConfig) {
 		c.gos = num
 	}
