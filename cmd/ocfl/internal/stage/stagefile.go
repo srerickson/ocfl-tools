@@ -167,7 +167,13 @@ func (s *StageFile) AddFile(localPath string, as string) error {
 // true, staged files under 'as' are removed from the stage state if they are
 // not found in localDir. The number of concurrent digest worker goroutines is
 // set with gos.
-func (s *StageFile) AddDir(ctx context.Context, localDir, as string, withHidden bool, remove bool, gos int) error {
+func (s *StageFile) AddDir(ctx context.Context, localDir string, opts ...AddOption) error {
+	addCong := addConfig{
+		as: ".",
+	}
+	for _, o := range opts {
+		o(&addCong)
+	}
 	if !filepath.IsAbs(localDir) {
 		absLocalDir, err := filepath.Abs(localDir)
 		if err != nil {
@@ -175,15 +181,12 @@ func (s *StageFile) AddDir(ctx context.Context, localDir, as string, withHidden 
 		}
 		localDir = absLocalDir
 	}
-	if as == "" {
-		as = "."
-	}
-	if !fs.ValidPath(as) {
-		return fmt.Errorf("invalid directory name: %s", as)
+	if !fs.ValidPath(addCong.as) {
+		return fmt.Errorf("invalid directory name: %s", addCong.as)
 	}
 	localFS := ocfl.DirFS(localDir)
-	if gos < 1 {
-		gos = runtime.NumCPU()
+	if addCong.gos < 1 {
+		addCong.gos = runtime.NumCPU()
 	}
 	algs, err := s.Algs()
 	if err != nil {
@@ -195,15 +198,15 @@ func (s *StageFile) AddDir(ctx context.Context, localDir, as string, withHidden 
 		fixity = algs[1:]
 	}
 	filesIter, walkErr := ocfl.WalkFiles(ctx, localFS, ".")
-	if !withHidden {
+	if !addCong.withHidden {
 		filesIter = filesIter.IgnoreHidden()
 	}
-	for result, err := range filesIter.DigestBatch(ctx, gos, alg, fixity...) {
+	for result, err := range filesIter.DigestBatch(ctx, addCong.gos, alg, fixity...) {
 		if err != nil {
 			return err
 		}
 		// convert result path back to os-specific path
-		logicalPath := path.Join(as, result.FullPath())
+		logicalPath := path.Join(addCong.as, result.FullPath())
 		localPath := filepath.Join(localDir, filepath.FromSlash(result.FullPath()))
 		localFile := &LocalFile{
 			Path:    localPath,
@@ -215,18 +218,18 @@ func (s *StageFile) AddDir(ctx context.Context, localDir, as string, withHidden 
 	if err := walkErr(); err != nil {
 		return err
 	}
-	if !remove {
+	if !addCong.remove {
 		return nil
 	}
 	// remove files in new state (under 'as') that aren't in localDir
 	for p := range s.NextState {
 		statName := p
-		if as != "." {
-			if !strings.HasPrefix(p, as+"/") {
+		if addCong.as != "." {
+			if !strings.HasPrefix(p, addCong.as+"/") {
 				continue // ignore files that aren't inside 'as'
 			}
 			// stat name relative to 'as'
-			statName = strings.TrimPrefix(p, as+"/")
+			statName = strings.TrimPrefix(p, addCong.as+"/")
 		}
 		_, err := ocfl.StatFile(ctx, localFS, statName)
 		if err == nil {
@@ -373,4 +376,36 @@ type LocalFile struct {
 	Path    string    `json:"path"`
 	Size    int64     `json:"size"`
 	Modtime time.Time `json:"modtime"`
+}
+
+type addConfig struct {
+	as         string
+	withHidden bool
+	remove     bool
+	gos        int
+}
+
+type AddOption func(c *addConfig)
+
+func AddAs(name string) AddOption {
+	return func(c *addConfig) {
+		c.as = name
+	}
+}
+
+func AddAndRemove() AddOption {
+	return func(c *addConfig) {
+		c.remove = true
+	}
+}
+
+func AddWithHidden() AddOption {
+	return func(c *addConfig) {
+		c.withHidden = true
+	}
+}
+func DigestJobs(num int) AddOption {
+	return func(c *addConfig) {
+		c.gos = num
+	}
 }

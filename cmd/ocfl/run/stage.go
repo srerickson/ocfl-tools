@@ -68,11 +68,11 @@ type StageAddCmd struct {
 
 func (cmd *StageAddCmd) Run(g *globals) error {
 	ctx := g.ctx
-	stage, err := stage.ReadStageFile(cmd.File)
+	changes, err := stage.ReadStageFile(cmd.File)
 	if err != nil {
 		return err
 	}
-	stage.SetLogger(g.logger)
+	changes.SetLogger(g.logger)
 	absPath, err := filepath.Abs(cmd.Path)
 	if err != nil {
 		return err
@@ -85,16 +85,26 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 	ftype := info.Mode().Type()
 	switch {
 	case ftype.IsDir():
-		err = stage.AddDir(ctx, absPath, cmd.As, cmd.All, cmd.Remove, cmd.Jobs)
+		opts := []stage.AddOption{
+			stage.AddAs(cmd.As),
+			stage.DigestJobs(cmd.Jobs),
+		}
+		if cmd.Remove {
+			opts = append(opts, stage.AddAndRemove())
+		}
+		if cmd.All {
+			opts = append(opts, stage.AddWithHidden())
+		}
+		err = changes.AddDir(ctx, absPath, opts...)
 	case ftype.IsRegular():
-		err = stage.AddFile(absPath, cmd.As)
+		err = changes.AddFile(absPath, cmd.As)
 	default:
 		err = errors.New("unsupported file type for: " + absPath)
 	}
 	if err != nil {
 		return err
 	}
-	if err := stage.Write(cmd.File); err != nil {
+	if err := changes.Write(cmd.File); err != nil {
 		return err
 	}
 	return nil
