@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"iter"
 	"log/slog"
 	"os"
 	"path"
@@ -158,8 +159,7 @@ func (s *StageFile) AddFile(localPath string, opts ...AddOption) error {
 		Size:    info.Size(),
 		Modtime: info.ModTime(),
 	}
-	s.add(addConf.as, localFile, digester.Sums())
-	return nil
+	return s.add(addConf.as, localFile, digester.Sums())
 }
 
 // AddDir walks files in a localDir and generates digests for files using the
@@ -215,7 +215,9 @@ func (s *StageFile) AddDir(ctx context.Context, localDir string, opts ...AddOpti
 			Size:    result.Info.Size(),
 			Modtime: result.Info.ModTime(),
 		}
-		s.add(logicalPath, localFile, result.Digests)
+		if err := s.add(logicalPath, localFile, result.Digests); err != nil {
+			return err
+		}
 	}
 	if err := walkErr(); err != nil {
 		return err
@@ -248,6 +250,55 @@ func (s *StageFile) AddDir(ctx context.Context, localDir string, opts ...AddOpti
 		return err
 	}
 	return nil
+}
+
+// StateErrors return an iterator that yields non-nil errors in the stage state.
+// This includes validation errors and digest with no associated content.
+func (s StageFile) StateErrors() iter.Seq[error] {
+	return func(yield func(error) bool) {
+		if err := s.NextState.DigestMap().Valid(); err != nil {
+			if !yield(err) {
+				return
+			}
+		}
+		for _, digest := range s.NextState {
+			if s.LocalContent[digest] != nil {
+				continue
+			}
+			if slices.Contains(s.ExistingDigests, digest) {
+				continue
+			}
+			err := fmt.Errorf("stage state includes a digest with no associated content: %q", digest)
+			if !yield(err) {
+				return
+			}
+		}
+	}
+}
+
+// ContentErrors returns an iterator that yields non-nil errors for local files
+// referenced in the stage that are either no longer readable or have changed
+// size or modtime.
+func (s StageFile) ContentErrors() iter.Seq[error] {
+	return func(yield func(error) bool) {
+		for _, file := range s.LocalContent {
+			name := file.Path
+			info, err := os.Stat(name)
+			if err == nil {
+				if info.Size() != file.Size {
+					err = fmt.Errorf("file has changed size: %q", name)
+				}
+				if info.ModTime().Compare(file.Modtime) != 0 {
+					err = fmt.Errorf("file has changed modtime: %q", name)
+				}
+			}
+			if err != nil {
+				if !yield(err) {
+					return
+				}
+			}
+		}
+	}
 }
 
 // Write s to file name as json
@@ -351,10 +402,14 @@ func (s *StageFile) SetLogger(l *slog.Logger) {
 }
 
 // Add adds a digestsed file to the stage as logical path.
-func (s *StageFile) add(logical string, local *LocalFile, digests digest.Set) {
+func (s *StageFile) add(logical string, local *LocalFile, digests digest.Set) error {
 	prevDigest := s.NextState[logical]
 	newDigest := digests.Delete(s.AlgID)
 	if prevDigest != newDigest {
+		if conflict := pathConflict(s.NextState, logical); conflict != "" {
+			err := fmt.Errorf("can't add %q because of conflict with %q", logical, conflict)
+			return err
+		}
 		if s.logger != nil {
 			action := "file added"
 			if prevDigest != "" {
@@ -372,6 +427,7 @@ func (s *StageFile) add(logical string, local *LocalFile, digests digest.Set) {
 	if !alreadyCommitted && !alreadyStaged {
 		s.LocalContent[newDigest] = local
 	}
+	return nil
 }
 
 type LocalFile struct {
@@ -424,4 +480,15 @@ func AddDigestJobs(num int) AddOption {
 	return func(c *addConfig) {
 		c.gos = num
 	}
+}
+
+// chek
+// return any keys in state that would conflict with newName
+func pathConflict(state ocfl.PathMap, newName string) string {
+	for name := range state {
+		if strings.HasPrefix(name, newName+"/") || strings.HasPrefix(newName, name+"/") {
+			return name
+		}
+	}
+	return ""
 }

@@ -34,6 +34,7 @@ func TestStageFile_AddDir(t *testing.T) {
 			err = changes.AddDir(ctx, contentFixture)
 			be.NilErr(t, err)
 			stageStateMachesDir(t, changes, contentFixture, false, ".")
+			be.NilErr(t, stageErrors(changes))
 		})
 
 		t.Run("with hidden", func(t *testing.T) {
@@ -42,6 +43,7 @@ func TestStageFile_AddDir(t *testing.T) {
 			err = changes.AddDir(ctx, contentFixture, stage.AddWithHidden())
 			be.NilErr(t, err)
 			stageStateMachesDir(t, changes, contentFixture, true, ".")
+			be.NilErr(t, stageErrors(changes))
 		})
 
 		t.Run("with digest jobs", func(t *testing.T) {
@@ -50,6 +52,7 @@ func TestStageFile_AddDir(t *testing.T) {
 			err = changes.AddDir(ctx, contentFixture, stage.AddDigestJobs(2))
 			be.NilErr(t, err)
 			stageStateMachesDir(t, changes, contentFixture, false, ".")
+			be.NilErr(t, stageErrors(changes))
 		})
 
 		t.Run("with remove", func(t *testing.T) {
@@ -58,20 +61,44 @@ func TestStageFile_AddDir(t *testing.T) {
 			err = changes.AddDir(ctx, contentFixture, stage.AddAndRemove())
 			be.NilErr(t, err)
 			stageStateMachesDir(t, changes, contentFixture, false, ".")
+			be.NilErr(t, stageErrors(changes))
 		})
 
-		t.Run("with multiple", func(t *testing.T) {
+		t.Run("with as", func(t *testing.T) {
 			changes, err := stage.NewStageFile(newObj, "sha512")
 			be.NilErr(t, err)
-			err = changes.AddDir(ctx, contentFixture, stage.AddWithHidden(), stage.AddAs("tmp"), stage.AddAndRemove())
+			err = changes.AddDir(ctx, contentFixture, stage.AddAs("tmp"))
 			be.NilErr(t, err)
-			stageStateMachesDir(t, changes, contentFixture, true, "tmp")
+			stageStateMachesDir(t, changes, contentFixture, false, "tmp")
+			be.NilErr(t, stageErrors(changes))
 		})
 
-		//t.Run("duplicate", func(t *testing.T) {
+		t.Run("missing directory", func(t *testing.T) {
+			changes, err := stage.NewStageFile(newObj, "sha512")
+			be.NilErr(t, err)
+			err = changes.AddDir(ctx, "missing")
+			be.Nonzero(t, err)
+			be.NilErr(t, stageErrors(changes))
+		})
 
-		//})
+		t.Run("as path invalid", func(t *testing.T) {
+			changes, err := stage.NewStageFile(newObj, "sha512")
+			be.NilErr(t, err)
+			err = changes.AddDir(ctx, contentFixture, stage.AddAs("../tmp"))
+			be.Nonzero(t, err)
+			be.NilErr(t, stageErrors(changes))
 
+		})
+		t.Run("as path conflict", func(t *testing.T) {
+			changes, err := stage.NewStageFile(newObj, "sha512")
+			be.NilErr(t, err)
+			err = changes.AddDir(ctx, contentFixture)
+			be.NilErr(t, err)
+			// add dir with same name as existing file
+			err = changes.AddDir(ctx, contentFixture, stage.AddAs("hello.csv"))
+			be.Nonzero(t, err)
+			be.NilErr(t, stageErrors(changes))
+		})
 	})
 
 	t.Run("stage existing object", func(t *testing.T) {
@@ -79,13 +106,15 @@ func TestStageFile_AddDir(t *testing.T) {
 		be.NilErr(t, err)
 		aFile := `a_file.txt` // there is only a single file in the object
 		t.Run("defaults", func(t *testing.T) {
-			stage, err := stage.NewStageFile(existingObject, "")
+			changes, err := stage.NewStageFile(existingObject, "")
 			be.NilErr(t, err)
 			// stage state includes a single file
-			be.Nonzero(t, stage.NextState[aFile])
-			be.NilErr(t, stage.AddDir(ctx, contentFixture))
+			be.Nonzero(t, changes.NextState[aFile])
+			be.NilErr(t, changes.AddDir(ctx, contentFixture))
 			// file is still there
-			be.Nonzero(t, stage.NextState[aFile])
+			be.Nonzero(t, changes.NextState[aFile])
+			be.NilErr(t, stageErrors(changes))
+
 		})
 		t.Run("with as", func(t *testing.T) {
 			changes, err := stage.NewStageFile(existingObject, "")
@@ -95,6 +124,7 @@ func TestStageFile_AddDir(t *testing.T) {
 			be.NilErr(t, changes.AddDir(ctx, contentFixture, stage.AddAs("newstuff")))
 			// file is still there
 			be.Nonzero(t, changes.NextState[aFile])
+			be.NilErr(t, stageErrors(changes))
 		})
 		t.Run("with remove", func(t *testing.T) {
 			changes, err := stage.NewStageFile(existingObject, "")
@@ -104,6 +134,7 @@ func TestStageFile_AddDir(t *testing.T) {
 			be.NilErr(t, changes.AddDir(ctx, contentFixture, stage.AddAndRemove()))
 			// the file has been removed
 			be.Zero(t, changes.NextState[aFile])
+			be.NilErr(t, stageErrors(changes))
 		})
 	})
 }
@@ -151,4 +182,14 @@ func isHidden(n string) bool {
 		}
 	}
 	return false
+}
+
+func stageErrors(stage *stage.StageFile) error {
+	for err := range stage.ContentErrors() {
+		return err
+	}
+	for err := range stage.StateErrors() {
+		return err
+	}
+	return nil
 }
