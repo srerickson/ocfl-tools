@@ -23,12 +23,12 @@ func (cmd *CommitCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	stage, err := stage.NewStageFile(obj, cmd.Alg)
+	changes, err := stage.NewStageFile(obj, cmd.Alg)
 	if err != nil {
 		return err
 	}
-	stage.SetLogger(g.logger)
-	if err := stage.AddDir(ctx, cmd.Path, ".", false, true, 0); err != nil {
+	changes.SetLogger(g.logger)
+	if err := changes.AddDir(ctx, cmd.Path, stage.AddAndRemove()); err != nil {
 		return err
 	}
 	if cmd.Name == "" {
@@ -37,7 +37,7 @@ func (cmd *CommitCmd) Run(g *globals) error {
 	if cmd.Email == "" {
 		cmd.Email = g.getenv(envVarUserEmail)
 	}
-	commit, err := stage.BuildCommit(cmd.Name, cmd.Email, cmd.Message)
+	commit, err := changes.BuildCommit(cmd.Name, cmd.Email, cmd.Message)
 	if err != nil {
 		return err
 	}

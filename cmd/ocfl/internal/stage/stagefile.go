@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"iter"
 	"log/slog"
 	"os"
 	"path"
@@ -14,6 +15,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/srerickson/ocfl-go"
@@ -116,8 +118,13 @@ func (s StageFile) Algs() ([]digest.Algorithm, error) {
 }
 
 // AddFile digests a local file and adds it to the stage using the file's
-// basename or 'as'.
-func (s *StageFile) AddFile(localPath string, as string) error {
+// basename. Use the [AddAs] option to change the logical name for the staged
+// file.
+func (s *StageFile) AddFile(localPath string, opts ...AddOption) error {
+	addConf := addConfig{}
+	for _, o := range opts {
+		o(&addConf)
+	}
 	if !filepath.IsAbs(localPath) {
 		absPath, err := filepath.Abs(localPath)
 		if err != nil {
@@ -125,11 +132,11 @@ func (s *StageFile) AddFile(localPath string, as string) error {
 		}
 		localPath = absPath
 	}
-	if as == "" {
-		as = filepath.Base(localPath)
+	if addConf.as == "" {
+		addConf.as = filepath.Base(localPath)
 	}
-	if as == "." || !fs.ValidPath(as) {
-		return fmt.Errorf("invalid file name: %s", as)
+	if addConf.as == "." || !fs.ValidPath(addConf.as) {
+		return fmt.Errorf("invalid file name: %s", addConf.as)
 	}
 	algs, err := s.Algs()
 	if err != nil {
@@ -156,18 +163,17 @@ func (s *StageFile) AddFile(localPath string, as string) error {
 		Size:    info.Size(),
 		Modtime: info.ModTime(),
 	}
-	s.add(as, localFile, digester.Sums())
-	return nil
+	return s.add(addConf.as, localFile, digester.Sums())
 }
 
 // AddDir walks files in a localDir and generates digests for files using the
-// stage's digest algorithm. File names are added to the stage state under a the
-// directory 'as' which defaults to the logical root for the object. Hidden
-// files and directories are ignored unless withHidden is true. if remove is
-// true, staged files under 'as' are removed from the stage state if they are
-// not found in localDir. The number of concurrent digest worker goroutines is
-// set with gos.
-func (s *StageFile) AddDir(ctx context.Context, localDir, as string, withHidden bool, remove bool, gos int) error {
+// stage's digest algorithm. By default hidden files are ignored. See
+// [AddOption] functions for ways to customize this.
+func (s *StageFile) AddDir(ctx context.Context, localDir string, opts ...AddOption) error {
+	addConf := addConfig{}
+	for _, o := range opts {
+		o(&addConf)
+	}
 	if !filepath.IsAbs(localDir) {
 		absLocalDir, err := filepath.Abs(localDir)
 		if err != nil {
@@ -175,15 +181,15 @@ func (s *StageFile) AddDir(ctx context.Context, localDir, as string, withHidden 
 		}
 		localDir = absLocalDir
 	}
-	if as == "" {
-		as = "."
+	if addConf.as == "" {
+		addConf.as = "."
 	}
-	if !fs.ValidPath(as) {
-		return fmt.Errorf("invalid directory name: %s", as)
+	if !fs.ValidPath(addConf.as) {
+		return fmt.Errorf("invalid directory name: %s", addConf.as)
 	}
 	localFS := ocfl.DirFS(localDir)
-	if gos < 1 {
-		gos = runtime.NumCPU()
+	if addConf.gos < 1 {
+		addConf.gos = runtime.NumCPU()
 	}
 	algs, err := s.Algs()
 	if err != nil {
@@ -194,55 +200,109 @@ func (s *StageFile) AddDir(ctx context.Context, localDir, as string, withHidden 
 	if len(algs) > 1 {
 		fixity = algs[1:]
 	}
+	if addConf.remove {
+		// Remove files before adding to get rid of potential conflicting paths.
+		// Files in new state (under 'as') that aren't in localDir are removed.
+		for p := range s.NextState {
+			statName := p
+			if addConf.as != "." {
+				if !strings.HasPrefix(p, addConf.as+"/") {
+					continue // ignore files that aren't inside 'as'
+				}
+				// stat name relative to 'as'
+				statName = strings.TrimPrefix(p, addConf.as+"/")
+			}
+			_, err := ocfl.StatFile(ctx, localFS, statName)
+			if err == nil {
+				continue
+			}
+			// Need the handle case where stateName parent is an existing file: this
+			// isn't a 'not found' error. See: https://github.com/golang/go/issues/18974
+			shouldRemove := errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) || errors.Is(err, syscall.ENOTDIR)
+			if shouldRemove {
+				delete(s.NextState, p)
+				if s.logger != nil {
+					s.logger.Info("file removed", "path", p)
+				}
+				continue
+			}
+			// other kinds of errors should be returned
+			return err
+		}
+	}
 	filesIter, walkErr := ocfl.WalkFiles(ctx, localFS, ".")
-	if !withHidden {
+	if !addConf.withHidden {
 		filesIter = filesIter.IgnoreHidden()
 	}
-	for result, err := range filesIter.DigestBatch(ctx, gos, alg, fixity...) {
+	for result, err := range filesIter.DigestBatch(ctx, addConf.gos, alg, fixity...) {
 		if err != nil {
 			return err
 		}
 		// convert result path back to os-specific path
-		logicalPath := path.Join(as, result.FullPath())
+		logicalPath := path.Join(addConf.as, result.FullPath())
 		localPath := filepath.Join(localDir, filepath.FromSlash(result.FullPath()))
 		localFile := &LocalFile{
 			Path:    localPath,
 			Size:    result.Info.Size(),
 			Modtime: result.Info.ModTime(),
 		}
-		s.add(logicalPath, localFile, result.Digests)
+		if err := s.add(logicalPath, localFile, result.Digests); err != nil {
+			return err
+		}
 	}
 	if err := walkErr(); err != nil {
 		return err
 	}
-	if !remove {
-		return nil
-	}
-	// remove files in new state (under 'as') that aren't in localDir
-	for p := range s.NextState {
-		statName := p
-		if as != "." {
-			if !strings.HasPrefix(p, as+"/") {
-				continue // ignore files that aren't inside 'as'
-			}
-			// stat name relative to 'as'
-			statName = strings.TrimPrefix(p, as+"/")
-		}
-		_, err := ocfl.StatFile(ctx, localFS, statName)
-		if err == nil {
-			continue
-		}
-		if errors.Is(err, fs.ErrNotExist) {
-			delete(s.NextState, p)
-			if s.logger != nil {
-				s.logger.Info("file removed", "path", p)
-			}
-			continue
-		}
-		// other kinds of errors should be returned
-		return err
-	}
 	return nil
+}
+
+// StateErrors return an iterator that yields non-nil errors in the stage state.
+// This includes validation errors and digest with no associated content.
+func (s StageFile) StateErrors() iter.Seq[error] {
+	return func(yield func(error) bool) {
+		if err := s.NextState.DigestMap().Valid(); err != nil {
+			if !yield(err) {
+				return
+			}
+		}
+		for _, digest := range s.NextState {
+			if s.LocalContent[digest] != nil {
+				continue
+			}
+			if slices.Contains(s.ExistingDigests, digest) {
+				continue
+			}
+			err := fmt.Errorf("stage state includes a digest with no associated content: %q", digest)
+			if !yield(err) {
+				return
+			}
+		}
+	}
+}
+
+// ContentErrors returns an iterator that yields non-nil errors for local files
+// referenced in the stage that are either no longer readable or have changed
+// size or modtime.
+func (s StageFile) ContentErrors() iter.Seq[error] {
+	return func(yield func(error) bool) {
+		for _, file := range s.LocalContent {
+			name := file.Path
+			info, err := os.Stat(name)
+			if err == nil {
+				if info.Size() != file.Size {
+					err = fmt.Errorf("file has changed size: %q", name)
+				}
+				if info.ModTime().Compare(file.Modtime) != 0 {
+					err = fmt.Errorf("file has changed modtime: %q", name)
+				}
+			}
+			if err != nil {
+				if !yield(err) {
+					return
+				}
+			}
+		}
+	}
 }
 
 // Write s to file name as json
@@ -268,8 +328,10 @@ func (s *StageFile) BuildCommit(name, email, message string) (*ocfl.Commit, erro
 	if email != "" && !strings.HasPrefix(`email:`, email) {
 		email = "email:" + email
 	}
-	state := s.NextState.DigestMap()
-	if err := state.Valid(); err != nil {
+	if err := errors.Join(slices.Collect(s.StateErrors())...); err != nil {
+		return nil, err
+	}
+	if err := errors.Join(slices.Collect(s.ContentErrors())...); err != nil {
 		return nil, err
 	}
 	algs, err := s.Algs()
@@ -284,7 +346,7 @@ func (s *StageFile) BuildCommit(name, email, message string) (*ocfl.Commit, erro
 		},
 		Message: message,
 		Stage: &ocfl.Stage{
-			State:           state,
+			State:           s.NextState.DigestMap(),
 			DigestAlgorithm: algs[0],
 			ContentSource:   s,
 			FixitySource:    s,
@@ -346,10 +408,14 @@ func (s *StageFile) SetLogger(l *slog.Logger) {
 }
 
 // Add adds a digestsed file to the stage as logical path.
-func (s *StageFile) add(logical string, local *LocalFile, digests digest.Set) {
+func (s *StageFile) add(logical string, local *LocalFile, digests digest.Set) error {
 	prevDigest := s.NextState[logical]
 	newDigest := digests.Delete(s.AlgID)
 	if prevDigest != newDigest {
+		if conflict := pathConflict(s.NextState, logical); conflict != "" {
+			err := fmt.Errorf("can't add %q because of conflict with %q", logical, conflict)
+			return err
+		}
 		if s.logger != nil {
 			action := "file added"
 			if prevDigest != "" {
@@ -367,10 +433,68 @@ func (s *StageFile) add(logical string, local *LocalFile, digests digest.Set) {
 	if !alreadyCommitted && !alreadyStaged {
 		s.LocalContent[newDigest] = local
 	}
+	return nil
 }
 
 type LocalFile struct {
 	Path    string    `json:"path"`
 	Size    int64     `json:"size"`
 	Modtime time.Time `json:"modtime"`
+}
+
+// AddOption is a function that can be used to configure the behavior of
+// [AddDir] or [AddFile]
+type AddOption func(c *addConfig)
+
+type addConfig struct {
+	as         string
+	withHidden bool
+	remove     bool
+	gos        int
+}
+
+// AddAs sets the logical name for staged content. When used with [AddDir], name
+// is treated as a directory in which files from the source directory are added.
+// For [AddFile], name is treated as a logical filename.
+func AddAs(name string) AddOption {
+	return func(c *addConfig) {
+		c.as = name
+	}
+}
+
+// AddAndRemove is an option for [AddDir] to also remove files in the stage that
+// aren't included in the source directory. If used with [AddAs], only files
+// under the directory named with [AddAs] are removed. This option is ignored if
+// used with [AddFile].
+func AddAndRemove() AddOption {
+	return func(c *addConfig) {
+		c.remove = true
+	}
+}
+
+// AddWithHidden is an option for [AddDir] to included hidden files and directories
+// from the source directory. This options is ignored if used with [AddFile].
+func AddWithHidden() AddOption {
+	return func(c *addConfig) {
+		c.withHidden = true
+	}
+}
+
+// AddDigestJobs is an option for [AddDir] that sets the number of goroutines used
+// to digest files in the source directory.
+func AddDigestJobs(num int) AddOption {
+	return func(c *addConfig) {
+		c.gos = num
+	}
+}
+
+// chek
+// return any keys in state that would conflict with newName
+func pathConflict(state ocfl.PathMap, newName string) string {
+	for name := range state {
+		if strings.HasPrefix(name, newName+"/") || strings.HasPrefix(newName, name+"/") {
+			return name
+		}
+	}
+	return ""
 }
