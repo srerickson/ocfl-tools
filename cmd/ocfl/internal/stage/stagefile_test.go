@@ -153,6 +153,38 @@ func TestStageFile_AddDir(t *testing.T) {
 	})
 }
 
+func TestStageFile_ContentErrors(t *testing.T) {
+	ctx := context.Background()
+	_, fixtures := testutil.TempDirTestData(t,
+		"testdata/store-fixtures/1.0/good-stores/reg-extension-dir-root",
+	)
+	root, err := ocfl.NewRoot(ctx, ocfl.DirFS(fixtures[0]), ".")
+	be.NilErr(t, err)
+	newObj, err := root.NewObject(ctx, "ark:xyz/987")
+	be.NilErr(t, err)
+
+	t.Run("missing content", func(t *testing.T) {
+		_, fixtures := testutil.TempDirTestData(t, "testdata/content-fixture")
+		contentFixture := fixtures[0]
+		changes, err := stage.NewStageFile(newObj, "sha512")
+		be.NilErr(t, err)
+		err = changes.AddDir(ctx, contentFixture)
+		be.NilErr(t, err)
+		// remove a file and update a file
+		err = os.Remove(filepath.Join(contentFixture, "hello.csv"))
+		be.NilErr(t, err)
+		err = os.WriteFile(filepath.Join(contentFixture, "folder1", "file.txt"), []byte("new content"), 0644)
+		be.NilErr(t, err)
+		// expect two errors
+		count := 0
+		for err := range changes.ContentErrors() {
+			be.Nonzero(t, err)
+			count++
+		}
+		be.Equal(t, 2, count)
+	})
+}
+
 func stageStateMachesDir(t *testing.T, s *stage.StageFile, dir string, withHidden bool, as string) {
 	t.Helper()
 	count := 0
