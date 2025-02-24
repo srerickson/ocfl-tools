@@ -30,7 +30,6 @@ Commands:
   validate        Validate an object or all objects in the storage root
   version         Print ocfl-tools version information
 
-
 Run "ocfl <command> --help" for more information on a command.
 ```
 
