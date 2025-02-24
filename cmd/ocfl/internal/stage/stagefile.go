@@ -121,7 +121,7 @@ func (s StageFile) Algs() ([]digest.Algorithm, error) {
 // basename. Use the [AddAs] option to change the logical name for the staged
 // file.
 func (s *StageFile) AddFile(localPath string, opts ...AddOption) error {
-	addConf := addConfig{as: filepath.Base(localPath)}
+	addConf := addConfig{}
 	for _, o := range opts {
 		o(&addConf)
 	}
@@ -131,6 +131,9 @@ func (s *StageFile) AddFile(localPath string, opts ...AddOption) error {
 			return err
 		}
 		localPath = absPath
+	}
+	if addConf.as == "" {
+		addConf.as = filepath.Base(localPath)
 	}
 	if addConf.as == "." || !fs.ValidPath(addConf.as) {
 		return fmt.Errorf("invalid file name: %s", addConf.as)
@@ -167,9 +170,7 @@ func (s *StageFile) AddFile(localPath string, opts ...AddOption) error {
 // stage's digest algorithm. By default hidden files are ignored. See
 // [AddOption] functions for ways to customize this.
 func (s *StageFile) AddDir(ctx context.Context, localDir string, opts ...AddOption) error {
-	addConf := addConfig{
-		as: ".",
-	}
+	addConf := addConfig{}
 	for _, o := range opts {
 		o(&addConf)
 	}
@@ -179,6 +180,9 @@ func (s *StageFile) AddDir(ctx context.Context, localDir string, opts ...AddOpti
 			return err
 		}
 		localDir = absLocalDir
+	}
+	if addConf.as == "" {
+		addConf.as = "."
 	}
 	if !fs.ValidPath(addConf.as) {
 		return fmt.Errorf("invalid directory name: %s", addConf.as)
