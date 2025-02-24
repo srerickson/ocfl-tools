@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/srerickson/ocfl-go"
@@ -163,18 +164,14 @@ func (s *StageFile) AddFile(localPath string, opts ...AddOption) error {
 }
 
 // AddDir walks files in a localDir and generates digests for files using the
-// stage's digest algorithm. File names are added to the stage state under a the
-// directory 'as' which defaults to the logical root for the object. Hidden
-// files and directories are ignored unless withHidden is true. if remove is
-// true, staged files under 'as' are removed from the stage state if they are
-// not found in localDir. The number of concurrent digest worker goroutines is
-// set with gos.
+// stage's digest algorithm. By default hidden files are ignored. See
+// [AddOption] functions for ways to customize this.
 func (s *StageFile) AddDir(ctx context.Context, localDir string, opts ...AddOption) error {
-	addCong := addConfig{
+	addConf := addConfig{
 		as: ".",
 	}
 	for _, o := range opts {
-		o(&addCong)
+		o(&addConf)
 	}
 	if !filepath.IsAbs(localDir) {
 		absLocalDir, err := filepath.Abs(localDir)
@@ -183,12 +180,12 @@ func (s *StageFile) AddDir(ctx context.Context, localDir string, opts ...AddOpti
 		}
 		localDir = absLocalDir
 	}
-	if !fs.ValidPath(addCong.as) {
-		return fmt.Errorf("invalid directory name: %s", addCong.as)
+	if !fs.ValidPath(addConf.as) {
+		return fmt.Errorf("invalid directory name: %s", addConf.as)
 	}
 	localFS := ocfl.DirFS(localDir)
-	if addCong.gos < 1 {
-		addCong.gos = runtime.NumCPU()
+	if addConf.gos < 1 {
+		addConf.gos = runtime.NumCPU()
 	}
 	algs, err := s.Algs()
 	if err != nil {
@@ -199,16 +196,46 @@ func (s *StageFile) AddDir(ctx context.Context, localDir string, opts ...AddOpti
 	if len(algs) > 1 {
 		fixity = algs[1:]
 	}
+	if addConf.remove {
+		// Remove files before adding to get rid of potential conflicting paths.
+		// Files in new state (under 'as') that aren't in localDir are removed.
+		for p := range s.NextState {
+			statName := p
+			if addConf.as != "." {
+				if !strings.HasPrefix(p, addConf.as+"/") {
+					continue // ignore files that aren't inside 'as'
+				}
+				// stat name relative to 'as'
+				statName = strings.TrimPrefix(p, addConf.as+"/")
+			}
+			_, err := ocfl.StatFile(ctx, localFS, statName)
+			if err == nil {
+				continue
+			}
+			// Need the handle case where stateName parent is an existing file: this
+			// isn't a 'not found' error. See: https://github.com/golang/go/issues/18974
+			shouldRemove := errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) || errors.Is(err, syscall.ENOTDIR)
+			if shouldRemove {
+				delete(s.NextState, p)
+				if s.logger != nil {
+					s.logger.Info("file removed", "path", p)
+				}
+				continue
+			}
+			// other kinds of errors should be returned
+			return err
+		}
+	}
 	filesIter, walkErr := ocfl.WalkFiles(ctx, localFS, ".")
-	if !addCong.withHidden {
+	if !addConf.withHidden {
 		filesIter = filesIter.IgnoreHidden()
 	}
-	for result, err := range filesIter.DigestBatch(ctx, addCong.gos, alg, fixity...) {
+	for result, err := range filesIter.DigestBatch(ctx, addConf.gos, alg, fixity...) {
 		if err != nil {
 			return err
 		}
 		// convert result path back to os-specific path
-		logicalPath := path.Join(addCong.as, result.FullPath())
+		logicalPath := path.Join(addConf.as, result.FullPath())
 		localPath := filepath.Join(localDir, filepath.FromSlash(result.FullPath()))
 		localFile := &LocalFile{
 			Path:    localPath,
@@ -220,33 +247,6 @@ func (s *StageFile) AddDir(ctx context.Context, localDir string, opts ...AddOpti
 		}
 	}
 	if err := walkErr(); err != nil {
-		return err
-	}
-	if !addCong.remove {
-		return nil
-	}
-	// remove files in new state (under 'as') that aren't in localDir
-	for p := range s.NextState {
-		statName := p
-		if addCong.as != "." {
-			if !strings.HasPrefix(p, addCong.as+"/") {
-				continue // ignore files that aren't inside 'as'
-			}
-			// stat name relative to 'as'
-			statName = strings.TrimPrefix(p, addCong.as+"/")
-		}
-		_, err := ocfl.StatFile(ctx, localFS, statName)
-		if err == nil {
-			continue
-		}
-		if errors.Is(err, fs.ErrNotExist) {
-			delete(s.NextState, p)
-			if s.logger != nil {
-				s.logger.Info("file removed", "path", p)
-			}
-			continue
-		}
-		// other kinds of errors should be returned
 		return err
 	}
 	return nil
@@ -324,8 +324,10 @@ func (s *StageFile) BuildCommit(name, email, message string) (*ocfl.Commit, erro
 	if email != "" && !strings.HasPrefix(`email:`, email) {
 		email = "email:" + email
 	}
-	state := s.NextState.DigestMap()
-	if err := state.Valid(); err != nil {
+	if err := errors.Join(slices.Collect(s.StateErrors())...); err != nil {
+		return nil, err
+	}
+	if err := errors.Join(slices.Collect(s.ContentErrors())...); err != nil {
 		return nil, err
 	}
 	algs, err := s.Algs()
@@ -340,7 +342,7 @@ func (s *StageFile) BuildCommit(name, email, message string) (*ocfl.Commit, erro
 		},
 		Message: message,
 		Stage: &ocfl.Stage{
-			State:           state,
+			State:           s.NextState.DigestMap(),
 			DigestAlgorithm: algs[0],
 			ContentSource:   s,
 			FixitySource:    s,

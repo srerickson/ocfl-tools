@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -92,11 +93,24 @@ func TestStageFile_AddDir(t *testing.T) {
 		t.Run("as path conflict", func(t *testing.T) {
 			changes, err := stage.NewStageFile(newObj, "sha512")
 			be.NilErr(t, err)
-			err = changes.AddDir(ctx, contentFixture)
+			err = changes.AddFile(filepath.Join(contentFixture, "hello.csv"))
 			be.NilErr(t, err)
 			// add dir with same name as existing file
 			err = changes.AddDir(ctx, contentFixture, stage.AddAs("hello.csv"))
 			be.Nonzero(t, err)
+			be.NilErr(t, stageErrors(changes))
+		})
+
+		t.Run("remove conflicting", func(t *testing.T) {
+			changes, err := stage.NewStageFile(newObj, "sha512")
+			be.NilErr(t, err)
+			// add a file that will result in a conflict later
+			err = changes.AddFile(filepath.Join(contentFixture, "hello.csv"), stage.AddAs("tmp/hello.csv/file"))
+			be.NilErr(t, err)
+			// this would result in a conflict, howeve AddAndRemove() should remove the
+			// conflicting path before new files are added.
+			err = changes.AddDir(ctx, contentFixture, stage.AddAs("tmp"), stage.AddAndRemove())
+			be.NilErr(t, err)
 			be.NilErr(t, stageErrors(changes))
 		})
 	})
@@ -133,7 +147,7 @@ func TestStageFile_AddDir(t *testing.T) {
 			be.Nonzero(t, changes.NextState[aFile])
 			be.NilErr(t, changes.AddDir(ctx, contentFixture, stage.AddAndRemove()))
 			// the file has been removed
-			be.Zero(t, changes.NextState[aFile])
+			stageStateMachesDir(t, changes, contentFixture, false, ".")
 			be.NilErr(t, stageErrors(changes))
 		})
 	})
@@ -185,11 +199,6 @@ func isHidden(n string) bool {
 }
 
 func stageErrors(stage *stage.StageFile) error {
-	for err := range stage.ContentErrors() {
-		return err
-	}
-	for err := range stage.StateErrors() {
-		return err
-	}
-	return nil
+	_, err := stage.BuildCommit("name", "email", "message")
+	return err
 }
