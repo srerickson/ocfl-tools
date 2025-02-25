@@ -152,7 +152,11 @@ func (g *globals) parseLocation(loc string) (ocfl.WriteFS, string, error) {
 		if err != nil {
 			return nil, "", err
 		}
-		var s3Opts []func(*s3.Options)
+		s3Opts := []func(*s3.Options){
+			// Prevent "Response has no supported checksum" log messages
+			// https://github.com/aws/aws-sdk-go-v2/issues/2999
+			func(o *s3.Options) { o.DisableLogOutputChecksumValidationSkipped = true },
+		}
 		if envEndpoint != "" {
 			s3Opts = append(s3Opts, func(o *s3.Options) {
 				o.BaseEndpoint = aws.String(envEndpoint)

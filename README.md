@@ -22,14 +22,14 @@ Commands:
   init-root       Create a new OCFL storage root
   log             Show an object's revision log
   ls              List objects in a storage root or files in an object
-  stage add       add a file or directory to the stage
-  stage commit    commit the stage as a new object version
-  stage ls        list files in the stage state
-  stage new       create a new stage for preparing updates to an object
-  stage rm        remove a file or directory from the stage
+  stage add       Add a file or directory to the stage
+  stage commit    Commit the stage as a new object version
+  stage diff      Show changes between an upstream object or directory and the stage
+  stage ls        List files in the stage state
+  stage new       Create a new stage for preparing updates to an object
+  stage rm        Remove a file or directory from the stage
   validate        Validate an object or all objects in the storage root
   version         Print ocfl-tools version information
-
 
 Run "ocfl <command> --help" for more information on a command.
 ```

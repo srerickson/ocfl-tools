@@ -16,12 +16,12 @@ const (
 )
 
 type StageCmd struct {
-	Add    StageAddCmd    `cmd:"" help:"add a file or directory to the stage"`
-	Commit StageCommitCmd `cmd:"" help:"commit the stage as a new object version"`
-	Diff   StageDiffCmd   `cmd:"" help:"show changes between the stage stage and the object"`
-	Ls     StageListCmd   `cmd:"" help:"list files in the stage state"`
-	New    NewStageCmd    `cmd:"" help:"create a new stage for preparing updates to an object"`
-	Rm     StageRmCmd     `cmd:"" help:"remove a file or directory from the stage"`
+	Add    StageAddCmd    `cmd:"" help:"Add a file or directory to the stage"`
+	Commit StageCommitCmd `cmd:"" help:"Commit the stage as a new object version"`
+	Diff   StageDiffCmd   `cmd:"" help:"Show changes between an upstream object or directory and the stage"`
+	Ls     StageListCmd   `cmd:"" help:"List files in the stage state"`
+	New    NewStageCmd    `cmd:"" help:"Create a new stage for preparing updates to an object"`
+	Rm     StageRmCmd     `cmd:"" help:"Remove a file or directory from the stage"`
 }
 
 // shared fields used by all stage sub-commands
@@ -156,8 +156,8 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 
 type StageDiffCmd struct {
 	stageCmdBase
-	All bool   `name:"all" help:"include hidden files when comparing stage to directory contents."`
-	Dir string `name:"dir" help:"compare contents of a directory to the stage instead of upstream "`
+	All bool   `name:"all" help:"include hidden files when used with --dir"`
+	Dir string `name:"dir" help:"use a local directory rather than upstream object as basis for comparison to the stage."`
 }
 
 func (cmd *StageDiffCmd) Run(g *globals) error {
