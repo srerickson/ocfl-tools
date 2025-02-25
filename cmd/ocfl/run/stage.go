@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/diff"
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/stage"
 )
 
@@ -14,11 +16,12 @@ const (
 )
 
 type StageCmd struct {
-	Add    StageAddCmd    `cmd:"" help:"add a file or directory to the stage"`
-	Commit StageCommitCmd `cmd:"" help:"commit the stage as a new object version"`
-	Ls     StageListCmd   `cmd:"" help:"list files in the stage state"`
-	New    NewStageCmd    `cmd:"" help:"create a new stage for preparing updates to an object"`
-	Rm     StageRmCmd     `cmd:"" help:"remove a file or directory from the stage"`
+	Add    StageAddCmd    `cmd:"" help:"Add a file or directory to the stage"`
+	Commit StageCommitCmd `cmd:"" help:"Commit the stage as a new object version"`
+	Diff   StageDiffCmd   `cmd:"" help:"Show changes between an upstream object or directory and the stage"`
+	Ls     StageListCmd   `cmd:"" help:"List files in the stage state"`
+	New    NewStageCmd    `cmd:"" help:"Create a new stage for preparing updates to an object"`
+	Rm     StageRmCmd     `cmd:"" help:"Remove a file or directory from the stage"`
 }
 
 // shared fields used by all stage sub-commands
@@ -62,7 +65,7 @@ type StageAddCmd struct {
 	All    bool   `name:"all" help:"include hidden files (.*) in path. Ignored if path is a file."`
 	As     string `name:"as" help:"logical name for the new content. Default: base name if path is a file; '.' if path is a directory."`
 	Jobs   int    `name:"jobs" short:"j" default:"0" help:"number of files to digest concurrently. Defaults to the number of CPU cores."`
-	Remove bool   `name:"rm" help:"also remove staged files not found in the path. Ignored if path is a file."`
+	Remove bool   `name:"remove" help:"also remove staged files not found in the path. Ignored if path is a file."`
 	Path   string `arg:"" help:"file or parent directory for content to add to the stage"`
 }
 
@@ -148,6 +151,66 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 	if err := os.Remove(cmd.File); err != nil {
 		return fmt.Errorf("removing stage file: %w", err)
 	}
+	return nil
+}
+
+type StageDiffCmd struct {
+	stageCmdBase
+	All bool   `name:"all" help:"include hidden files when used with --dir"`
+	Dir string `name:"dir" help:"use a local directory rather than upstream object as basis for comparison to the stage."`
+}
+
+func (cmd *StageDiffCmd) Run(g *globals) error {
+	ctx := g.ctx
+	baseState := ocfl.PathMap{}
+	stageFile, err := stage.ReadStageFile(cmd.File)
+	if err != nil {
+		return err
+	}
+	stageFile.SetLogger(g.logger)
+	stageState := stageFile.NextState
+	switch {
+	case cmd.Dir != "":
+		algs, err := stageFile.Algs()
+		if err != nil {
+			return err
+		}
+		alg := algs[0]
+		filesIter, walkErr := ocfl.WalkFiles(ctx, ocfl.DirFS(cmd.Dir), ".")
+		if !cmd.All {
+			filesIter = filesIter.IgnoreHidden()
+		}
+		for result, err := range filesIter.Digest(ctx, algs[0]) {
+			if err != nil {
+				return err
+			}
+			baseState[result.FullPath()] = result.Digests[alg.ID()]
+		}
+		if err := walkErr(); err != nil {
+			return err
+		}
+	default:
+		root, err := g.getRoot()
+		if err != nil {
+			return err
+		}
+		obj, err := root.NewObject(ctx, stageFile.ID)
+		if err != nil {
+			return err
+		}
+		if obj.Exists() {
+			baseState = obj.Inventory().Version(0).State().PathMap()
+		}
+	}
+
+	diffs, err := diff.Diff(baseState, stageState)
+	if err != nil {
+		return err
+	}
+	if diffs.Empty() {
+		return nil
+	}
+	fmt.Fprint(g.stdout, diffs.String())
 	return nil
 }
 
