@@ -28,6 +28,7 @@ Commands:
   stage ls        List files in the stage state
   stage new       Create a new stage for preparing updates to an object
   stage rm        Remove a file or directory from the stage
+  stage status    Show stage details and report any errors
   validate        Validate an object or all objects in the storage root
   version         Print ocfl-tools version information
 
