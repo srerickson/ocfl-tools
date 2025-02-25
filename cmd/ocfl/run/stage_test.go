@@ -207,5 +207,92 @@ func TestStageCommit(t *testing.T) {
 		be.Zero(t, stdout)
 		be.Zero(t, stderr)
 	})
+}
 
+func TestStageDiff(t *testing.T) {
+	_, fixtures := testutil.TempDirTestData(t,
+		`testdata/content-fixture`,
+		`testdata/store-fixtures/1.0/good-stores/reg-extension-dir-root`,
+	)
+	contentFixture := fixtures[0]
+	ocflPath := fixtures[1]
+	env := map[string]string{"OCFL_ROOT": ocflPath}
+	t.Run("existing object", func(t *testing.T) {
+		stageDir := t.TempDir()
+		stagePath := filepath.Join(stageDir, "my-stage.json")
+		existingID := "ark:123/abc"
+		// create the stage file
+		cmd := []string{"stage", "new", "--file", stagePath, existingID}
+		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.In(t, stagePath, stderr)
+		})
+		// no changes for fress stage
+		cmd = []string{"stage", "diff", "--file", stagePath}
+		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.Equal(t, "", stdout)
+		})
+		// stage fixture and remove existing content
+		cmd = []string{"stage", "add", "--remove", "--file", stagePath, contentFixture}
+		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+		})
+		// show diff
+		cmd = []string{"stage", "diff", "--file", stagePath}
+		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			expect := []string{
+				"add: folder1/file.txt",
+				"add: folder1/folder2/file2.txt",
+				"add: folder1/folder2/sculpture-stone-face-head-888027.jpg",
+				"add: hello.csv",
+				"rem: a_file.txt",
+			}
+			for i, out := range strings.Split(strings.TrimSpace(stdout), "\n") {
+				be.Equal(t, expect[i], out)
+			}
+		})
+
+	})
+
+	t.Run("new object", func(t *testing.T) {
+		stageDir := t.TempDir()
+		stagePath := filepath.Join(stageDir, "my-stage.json")
+		newID := "ark:xyz/678"
+		// create the stage file
+		cmd := []string{"stage", "new", "--file", stagePath, newID}
+		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.In(t, stagePath, stderr)
+		})
+		// no changes for fress stage
+		cmd = []string{"stage", "diff", "--file", stagePath}
+		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.Equal(t, "", stdout)
+		})
+		// stage new content
+		cmd = []string{"stage", "add", "--all", "--file", stagePath, contentFixture}
+		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+		})
+		// show diff
+		cmd = []string{"stage", "diff", "--file", stagePath}
+		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			expect := []string{
+				"add: folder1/file.txt",
+				"add: folder1/folder2/.hidden_dir/note.txt",
+				"add: folder1/folder2/.hidden_file",
+				"add: folder1/folder2/file2.txt",
+				"add: folder1/folder2/sculpture-stone-face-head-888027.jpg",
+				"add: hello.csv",
+			}
+			for i, out := range strings.Split(strings.TrimSpace(stdout), "\n") {
+				be.Equal(t, expect[i], out)
+			}
+		})
+
+	})
 }

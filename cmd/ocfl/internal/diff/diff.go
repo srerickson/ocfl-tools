@@ -5,7 +5,15 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/exp/maps"
+)
+
+var (
+	addStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	remStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	modStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	movStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 )
 
 type Result struct {
@@ -77,18 +85,18 @@ func Diff(aPaths, bPaths map[string]string) (result Result, err error) {
 func (r Result) String() string {
 	b := &strings.Builder{}
 	for _, n := range r.Added {
-		fmt.Fprintln(b, "+", n)
+		fmt.Fprintln(b, addStyle.Render("add:"), n)
 	}
 	for _, n := range r.Removed {
-		fmt.Fprintln(b, "-", n)
+		fmt.Fprintln(b, remStyle.Render("rem:"), n)
 	}
 	for _, n := range r.Modified {
-		fmt.Fprintln(b, "~", n)
+		fmt.Fprintln(b, modStyle.Render("mod:"), n)
 	}
 	moved := maps.Keys(r.Renamed)
 	sort.Strings(moved)
 	for _, n := range moved {
-		fmt.Fprintln(b, n, "->", r.Renamed[n])
+		fmt.Fprintln(b, movStyle.Render("mov:"), "{", n, "=>", r.Renamed[n], "}")
 	}
 	return b.String()
 }
