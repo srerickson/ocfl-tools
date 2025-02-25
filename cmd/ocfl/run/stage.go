@@ -22,6 +22,7 @@ type StageCmd struct {
 	Ls     StageListCmd   `cmd:"" help:"List files in the stage state"`
 	New    NewStageCmd    `cmd:"" help:"Create a new stage for preparing updates to an object"`
 	Rm     StageRmCmd     `cmd:"" help:"Remove a file or directory from the stage"`
+	Status StageStatusCmd `cmd:"" help:"Show stage details and report any errors"`
 }
 
 // shared fields used by all stage sub-commands
@@ -29,6 +30,7 @@ type stageCmdBase struct {
 	File string `name:"file" short:"f" default:"ocfl-stage.json" help:"path to stage file"`
 }
 
+// stage new
 type NewStageCmd struct {
 	stageCmdBase
 	Spec string `name:"ocflv" default:"1.1" help:"OCFL spec for the new object version"`
@@ -60,6 +62,7 @@ func (cmd *NewStageCmd) Run(g *globals) error {
 	return nil
 }
 
+// stage add
 type StageAddCmd struct {
 	stageCmdBase
 	All    bool   `name:"all" help:"include hidden files (.*) in path. Ignored if path is a file."`
@@ -113,6 +116,7 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 	return nil
 }
 
+// stage commit
 type StageCommitCmd struct {
 	stageCmdBase
 	Message string `name:"message" short:"m" help:"Message to include in the object version metadata"`
@@ -154,6 +158,7 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 	return nil
 }
 
+// stage diff
 type StageDiffCmd struct {
 	stageCmdBase
 	All bool   `name:"all" help:"include hidden files when used with --dir"`
@@ -214,6 +219,7 @@ func (cmd *StageDiffCmd) Run(g *globals) error {
 	return nil
 }
 
+// 'stage list' command
 type StageListCmd struct {
 	stageCmdBase
 	WithDigests bool `name:"digests" short:"d" help:"include file digests in output"`
@@ -247,6 +253,60 @@ func (cmd *StageRmCmd) Run(g *globals) error {
 	}
 	if err := stage.Write(cmd.File); err != nil {
 		return err
+	}
+	return nil
+}
+
+// 'stage status' command
+type StageStatusCmd struct {
+	stageCmdBase
+}
+
+func (cmd *StageStatusCmd) Run(g *globals) error {
+	ctx := g.ctx
+	stageFile, err := stage.ReadStageFile(cmd.File)
+	if err != nil {
+		return err
+	}
+	stageFile.SetLogger(g.logger)
+	fmt.Fprintf(g.stdout, "object:      %s (%s)\n", stageFile.ID, stageFile.NextHead)
+	fmt.Fprintf(g.stdout, "digest alg:  %s\n", stageFile.AlgID)
+	fmt.Fprintf(g.stdout, "fixity algs: %s\n", stageFile.FixityIDs)
+	fmt.Fprintf(g.stdout, "state size:  %d files\n", len(stageFile.NextState))
+	root, err := g.getRoot()
+	if err != nil {
+		return err
+	}
+	obj, err := root.NewObject(ctx, stageFile.ID)
+	if err != nil {
+		return err
+	}
+	baseState := ocfl.PathMap{}
+	if obj.Exists() {
+		baseState = obj.Inventory().Version(0).State().PathMap()
+	}
+	stateDiff, err := diff.Diff(baseState, stageFile.NextState)
+	if err != nil {
+		return err
+	}
+	switch {
+	case !stateDiff.Empty():
+		fmt.Fprintln(g.stdout, "stage has changes to commit")
+	default:
+		fmt.Fprintln(g.stdout, "stage is unchanged and/or empty")
+	}
+	hasErrors := false
+	// check stage content
+	for err := range stageFile.ContentErrors() {
+		hasErrors = true
+		g.logger.Error(err.Error())
+	}
+	for err := range stageFile.StateErrors() {
+		hasErrors = true
+		g.logger.Error(err.Error())
+	}
+	if hasErrors {
+		return errors.New("stage has errors")
 	}
 	return nil
 }

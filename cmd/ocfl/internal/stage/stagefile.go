@@ -288,12 +288,15 @@ func (s StageFile) ContentErrors() iter.Seq[error] {
 		for _, file := range s.LocalContent {
 			name := file.Path
 			info, err := os.Stat(name)
+			if err != nil {
+				err = fmt.Errorf("file is missing or unreadable: %w", err)
+			}
 			if err == nil {
 				if info.Size() != file.Size {
-					err = fmt.Errorf("file has changed size: %q", name)
+					err = fmt.Errorf("file has changed (size): %q", name)
 				}
 				if info.ModTime().Compare(file.Modtime) != 0 {
-					err = fmt.Errorf("file has changed modtime: %q", name)
+					err = fmt.Errorf("file has changed (modtime): %q", name)
 				}
 			}
 			if err != nil {
