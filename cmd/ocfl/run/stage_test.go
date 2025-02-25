@@ -296,3 +296,44 @@ func TestStageDiff(t *testing.T) {
 
 	})
 }
+
+func TestStageStatus(t *testing.T) {
+	_, fixtures := testutil.TempDirTestData(t,
+		`testdata/content-fixture`,
+		`testdata/store-fixtures/1.0/good-stores/reg-extension-dir-root`,
+	)
+	contentFixture := fixtures[0]
+	env := map[string]string{"OCFL_ROOT": fixtures[1]}
+	t.Run("new object", func(t *testing.T) {
+		newID := "ark:xyz/678"
+		stageDir := t.TempDir()
+		stagePath := filepath.Join(stageDir, "my-stage.json")
+		cmd := []string{"stage", "new", "--file", stagePath, newID}
+		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.In(t, stagePath, stderr)
+		})
+		cmd = []string{"stage", "status", "--file", stagePath}
+		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.In(t, newID+" (v1)", stdout)
+		})
+		cmd = []string{"stage", "add", "--file", stagePath, contentFixture}
+		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+		})
+		cmd = []string{"stage", "status", "--file", stagePath}
+		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.In(t, newID+" (v1)", stdout)
+			be.In(t, "stage has changes", stdout)
+		})
+		// report errors
+		be.NilErr(t, os.Remove(filepath.Join(contentFixture, "hello.csv")))
+		cmd = []string{"stage", "status", "--file", stagePath}
+		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "file is missing", stderr)
+		})
+	})
+}

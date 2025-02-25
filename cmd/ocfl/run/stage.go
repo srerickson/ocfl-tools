@@ -291,7 +291,7 @@ func (cmd *StageStatusCmd) Run(g *globals) error {
 	}
 	switch {
 	case !stateDiff.Empty():
-		fmt.Fprintln(g.stdout, "stage is changed from upstream object")
+		fmt.Fprintln(g.stdout, "stage has changes to commit")
 	default:
 		fmt.Fprintln(g.stdout, "stage is unchanged and/or empty")
 	}
