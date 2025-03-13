@@ -12,7 +12,7 @@ import (
 
 const exportHelp = "Export object contents to the local filesystem"
 
-type exportCmd struct {
+type ExportCmd struct {
 	ID       string   `name:"id" short:"i" help:"The ID for the object to export"`
 	Version  int      `name:"version" short:"v" default:"0" help:"The number (unpadded) of the object version from which to export content"`
 	Replace  bool     `name:"replace" help:"replace existing files with object contents"`
@@ -21,7 +21,7 @@ type exportCmd struct {
 	To       string   `name:"to" short:"t" default:"." help:"The destination directory for writing exported content. For single file exports, use '-' to print file to STDOUT or a file name."`
 }
 
-func (cmd *exportCmd) Run(g *globals) error {
+func (cmd *ExportCmd) Run(g *globals) error {
 	root, err := g.getRoot()
 	if err != nil {
 		return err

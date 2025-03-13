@@ -12,14 +12,14 @@ import (
 
 const initRootHelp = `Create a new OCFL storage root`
 
-type initRootCmd struct {
+type InitRootCmd struct {
 	Layout      string `name:"layout" short:"l" optional:"" default:"0004-hashed-n-tuple-storage-layout"  help:"The storage root layout extension (see https://ocfl.github.io/extensions/)."`
 	Description string `name:"description" short:"d" optional:"" help:"Description to include in the storage root metadata"`
 	Spec        string `name:"ocflv" default:"1.1" help:"OCFL version for the storage root"`
 	ExistingOK  bool   `name:"existing-ok" help:"don't return an error if a storage root already exists at the location"`
 }
 
-func (cmd *initRootCmd) Run(g *globals) error {
+func (cmd *InitRootCmd) Run(g *globals) error {
 	fsys, dir, err := g.parseLocation(g.RootLocation)
 	if err != nil {
 		return err
