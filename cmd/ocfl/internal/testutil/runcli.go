@@ -8,11 +8,15 @@ import (
 )
 
 func RunCLI(args []string, env map[string]string, expect func(err error, stdout, stderr string)) {
+	RunCLIInput(args, env, "", expect)
+}
+
+func RunCLIInput(args []string, env map[string]string, input string, expect func(err error, stdout, stderr string)) {
 	ctx := context.Background()
 	if env == nil {
 		env = map[string]string{}
 	}
-	stdin := strings.NewReader("")
+	stdin := strings.NewReader(input)
 	stdout := &strings.Builder{}
 	stderr := &strings.Builder{}
 	getenv := func(key string) string { return env[key] }
