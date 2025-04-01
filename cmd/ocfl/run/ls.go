@@ -9,13 +9,13 @@ import (
 
 const lsHelp = "List objects in a storage root or files in an object"
 
-type lsCmd struct {
+type LsCmd struct {
 	ID          string `name:"id" short:"i" optional:"" help:"The id of object to list contents from."`
 	Version     int    `name:"version" short:"v" default:"0" help:"The object version number (unpadded) to list contents from. The default (0) lists the latest version."`
 	WithDigests bool   `name:"digests" short:"d" help:"Show digests when listing contents of an object version."`
 }
 
-func (cmd *lsCmd) Run(g *globals) error {
+func (cmd *LsCmd) Run(g *globals) error {
 	root, err := g.getRoot()
 	if err != nil {
 		return err
