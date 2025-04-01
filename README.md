@@ -59,7 +59,12 @@ export AWS_ACCESS_KEY_ID="..."
 export AWS_SECRET_ACCESS_KEY="..."
 ```
 
-[Path-style S3 requests](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html#path-style-access) are enabled by setting `OCFL_S3_PATHSTYLE=true`.
+[Path-style S3 requests](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html#path-style-access) can be enabled by setting `OCFL_S3_PATHSTYLE=true`.
+
+Some non-AWS S3 implementations may return errors due to recent API changes (see
+https://github.com/aws/aws-sdk-go-v2/discussions/2960). If you are seeing errors
+like "`api error XAmzContentSHA256Mismatch: UnknownError`", try disabling
+request checksums `OCFL_S3_CHECKSUM_WHEN_REQUIRED=true`.
 
 ## Installation
 
