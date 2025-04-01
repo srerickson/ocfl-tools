@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/srerickson/ocfl-go"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
 const deleteHelp = "Delete an object in the storage root"
@@ -24,10 +25,6 @@ func (cmd *DeleteCmd) Run(g *globals) error {
 	if err != nil {
 		return fmt.Errorf("reading object id: %q: %w", cmd.ID, err)
 	}
-	writeFS, ok := obj.FS().(ocfl.WriteFS)
-	if !ok {
-		return fmt.Errorf("storage backend doesn't support deletion")
-	}
 	if !cmd.NoConfirm {
 		fmt.Fprintf(g.stdout, "do you really want to delete %q [y/N]: ", obj.ID())
 		reader := bufio.NewReader(g.stdin)
@@ -38,9 +35,9 @@ func (cmd *DeleteCmd) Run(g *globals) error {
 			return nil
 		}
 	}
-	g.logger.Info("deleting object", "object_id", obj.ID(), "object_path", obj.Path())
-	if err := writeFS.RemoveAll(g.ctx, obj.Path()); err != nil {
+	if err := ocflfs.RemoveAll(g.ctx, obj.FS(), obj.Path()); err != nil {
 		return fmt.Errorf("deleting %q: %w", obj.ID(), err)
 	}
+	g.logger.Info("deleted object", "object_id", obj.ID(), "object_path", obj.Path())
 	return nil
 }

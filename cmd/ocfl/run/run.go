@@ -19,8 +19,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/charmbracelet/log"
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/backend/local"
-	ocflS3 "github.com/srerickson/ocfl-go/backend/s3"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
+	"github.com/srerickson/ocfl-go/fs/local"
+	ocflS3 "github.com/srerickson/ocfl-go/fs/s3"
 )
 
 const (
@@ -131,7 +132,7 @@ type globals struct {
 
 // convert a location, which may be a local path or an 's3://' path, into
 // an FS and a path.
-func (g *globals) parseLocation(loc string) (ocfl.WriteFS, string, error) {
+func (g *globals) parseLocation(loc string) (ocflfs.WriteFS, string, error) {
 	if loc == "" {
 		return nil, "", errors.New("location not set")
 	}
@@ -207,7 +208,7 @@ func (g *globals) getRoot() (*ocfl.Root, error) {
 	return root, nil
 }
 
-func locationString(fsys ocfl.FS, dir string) string {
+func locationString(fsys ocflfs.FS, dir string) string {
 	switch fsys := fsys.(type) {
 	case *ocflS3.BucketFS:
 		return "s3://" + path.Join(fsys.Bucket, dir)

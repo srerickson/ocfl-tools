@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 
 	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/digest"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
+
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/diff"
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/stage"
 )
@@ -181,11 +184,11 @@ func (cmd *StageDiffCmd) Run(g *globals) error {
 			return err
 		}
 		alg := algs[0]
-		filesIter, walkErr := ocfl.WalkFiles(ctx, ocfl.DirFS(cmd.Dir), ".")
+		filesIter, walkErr := ocflfs.UntilErr(ocflfs.WalkFiles(ctx, ocflfs.DirFS(cmd.Dir), "."))
 		if !cmd.All {
-			filesIter = filesIter.IgnoreHidden()
+			filesIter = ocflfs.FilterFiles(filesIter, ocflfs.IsNotHidden)
 		}
-		for result, err := range filesIter.Digest(ctx, algs[0]) {
+		for result, err := range digest.DigestFiles(ctx, filesIter, alg) {
 			if err != nil {
 				return err
 			}
