@@ -29,6 +29,12 @@ const (
 	envVarUserEmail   = "OCFL_USER_EMAIL"   // user email for commit
 	envVarS3PathStyle = "OCFL_S3_PATHSTYLE" // if "true", enable path-style addressing for s3
 
+	// if "true", S3 request checksums are only calculated when required. This
+	// is sometimes needed to support non-AWS S3 implementations like
+	// OpenStack's Object Storage. See:
+	// https://github.com/aws/aws-sdk-go-v2/discussions/2960
+	envVarS3ChecksumWhenRequired = "OCFL_S3_CHECKSUM_WHEN_REQUIRED"
+
 	// keys that can be used in tests
 	envVarAWSKey      = "AWS_ACCESS_KEY_ID"
 	envVarAWSSecret   = "AWS_SECRET_ACCESS_KEY"
@@ -149,6 +155,9 @@ func (g *globals) parseLocation(loc string) (ocfl.WriteFS, string, error) {
 		}
 		if envRegion != "" {
 			loadOpts = append(loadOpts, config.WithRegion(envRegion))
+		}
+		if strings.EqualFold(g.getenv(envVarS3ChecksumWhenRequired), "true") {
+			loadOpts = append(loadOpts, config.WithRequestChecksumCalculation(aws.RequestChecksumCalculationWhenRequired))
 		}
 		cfg, err := config.LoadDefaultConfig(g.ctx, loadOpts...)
 		if err != nil {

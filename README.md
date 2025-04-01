@@ -17,6 +17,7 @@ Flags:
 Commands:
   commit          Create or update an object using contents of a local directory
   diff            Show changed files between versions of an object
+  delete          Delete an object in the storage root
   export          Export object contents to the local filesystem
   info            Show information about an object or the active storage root
   init-root       Create a new OCFL storage root
@@ -59,7 +60,12 @@ export AWS_ACCESS_KEY_ID="..."
 export AWS_SECRET_ACCESS_KEY="..."
 ```
 
-[Path-style S3 requests](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html#path-style-access) are enabled by setting `OCFL_S3_PATHSTYLE=true`.
+[Path-style S3 requests](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html#path-style-access) can be enabled by setting `OCFL_S3_PATHSTYLE=true`.
+
+Some non-AWS S3 implementations may return errors due to [API
+changes](https://github.com/aws/aws-sdk-go-v2/discussions/2960). If you see the
+error, "`XAmzContentSHA256Mismatch`", try disabling request checksums using:
+`OCFL_S3_CHECKSUM_WHEN_REQUIRED=true`.
 
 ## Installation
 
