@@ -40,12 +40,10 @@ func TestLog(t *testing.T) {
 	t.Run("missing args", func(t *testing.T) {
 		testutil.RunCLI([]string{"log"}, nil, func(err error, stdout string, stderr string) {
 			be.True(t, err != nil)
-			be.In(t, "missing required flag", stderr)
 		})
 		args := []string{"log", "--root", filepath.Join(goodStoreFixtures, `reg-extension-dir-root`)}
 		testutil.RunCLI(args, nil, func(err error, stdout string, stderr string) {
 			be.True(t, err != nil)
-			be.In(t, "missing required flag", stderr)
 		})
 	})
 }

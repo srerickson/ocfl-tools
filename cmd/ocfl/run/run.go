@@ -19,8 +19,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/charmbracelet/log"
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/backend/local"
-	ocflS3 "github.com/srerickson/ocfl-go/backend/s3"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
+	"github.com/srerickson/ocfl-go/fs/local"
+	ocflS3 "github.com/srerickson/ocfl-go/fs/s3"
+	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/httpfs"
 )
 
 const (
@@ -43,7 +45,6 @@ const (
 )
 
 func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) error {
-
 	parser, err := kong.New(&cli, kong.Name("ocfl"),
 		kong.Writers(stdout, stderr),
 		kong.Description("command line tool for working with OCFL repositories"),
@@ -131,19 +132,19 @@ type globals struct {
 
 // convert a location, which may be a local path or an 's3://' path, into
 // an FS and a path.
-func (g *globals) parseLocation(loc string) (ocfl.WriteFS, string, error) {
+func (g *globals) parseLocation(loc string) (ocflfs.FS, string, error) {
 	if loc == "" {
 		return nil, "", errors.New("location not set")
 	}
-	rl, err := url.Parse(loc)
+	locUrl, err := url.Parse(loc)
 	if err != nil {
 		return nil, "", err
 	}
-	switch rl.Scheme {
+	switch locUrl.Scheme {
 	case "s3":
 		var loadOpts []func(*config.LoadOptions) error
-		bucket := rl.Host
-		prefix := strings.TrimPrefix(rl.Path, "/")
+		bucket := locUrl.Host
+		prefix := strings.TrimPrefix(locUrl.Path, "/")
 		// values passed through getenv are mostly for testing.
 		envKey := g.getenv(envVarAWSKey)
 		envSecret := g.getenv(envVarAWSSecret)
@@ -181,6 +182,9 @@ func (g *globals) parseLocation(loc string) (ocfl.WriteFS, string, error) {
 		s3Client := s3.NewFromConfig(cfg, s3Opts...)
 		fsys := &ocflS3.BucketFS{S3: s3Client, Bucket: bucket, Logger: g.logger}
 		return fsys, prefix, nil
+	case "http", "https":
+		fsys := httpfs.New(loc)
+		return fsys, ".", nil
 	default:
 		absPath, err := filepath.Abs(loc)
 		if err != nil {
@@ -207,8 +211,43 @@ func (g *globals) getRoot() (*ocfl.Root, error) {
 	return root, nil
 }
 
-func locationString(fsys ocfl.FS, dir string) string {
+// newObject using id (if set) or full object path. if mustExist is true
+// the object's existence is checked.
+func (g *globals) newObject(id, objPath string, opts ...ocfl.ObjectOption) (*ocfl.Object, error) {
+	if id == "" && objPath == "" {
+		err := errors.New("must provide an object ID or an object path")
+		return nil, err
+	}
+	if id == "" {
+		fsys, dir, err := g.parseLocation(objPath)
+		if err != nil {
+			return nil, err
+		}
+		obj, err := ocfl.NewObject(g.ctx, fsys, dir, opts...)
+		if err != nil {
+			return nil, fmt.Errorf("reading object at path: %q: %w", objPath, err)
+		}
+		return obj, nil
+	}
+	root, err := g.getRoot()
+	if err != nil {
+		return nil, err
+	}
+	obj, err := root.NewObject(g.ctx, id, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("reading object id: %q: %w", id, err)
+	}
+	return obj, nil
+}
+
+func locationString(fsys ocflfs.FS, dir string) string {
 	switch fsys := fsys.(type) {
+	case *httpfs.FS:
+		base := fsys.URL()
+		if dir == "." {
+			return base
+		}
+		return base + "/" + path.Clean(dir)
 	case *ocflS3.BucketFS:
 		return "s3://" + path.Join(fsys.Bucket, dir)
 	case *local.FS:

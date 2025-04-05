@@ -11,6 +11,7 @@ import (
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/stage"
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/testutil"
 )
@@ -22,7 +23,7 @@ func TestStageFile_AddDir(t *testing.T) {
 		"testdata/store-fixtures/1.0/good-stores/reg-extension-dir-root",
 	)
 	contentFixture := fixtures[0]
-	root, err := ocfl.NewRoot(ctx, ocfl.DirFS(fixtures[1]), ".")
+	root, err := ocfl.NewRoot(ctx, ocflfs.DirFS(fixtures[1]), ".")
 	be.NilErr(t, err)
 
 	t.Run("stage new object", func(t *testing.T) {
@@ -158,7 +159,7 @@ func TestStageFile_ContentErrors(t *testing.T) {
 	_, fixtures := testutil.TempDirTestData(t,
 		"testdata/store-fixtures/1.0/good-stores/reg-extension-dir-root",
 	)
-	root, err := ocfl.NewRoot(ctx, ocfl.DirFS(fixtures[0]), ".")
+	root, err := ocfl.NewRoot(ctx, ocflfs.DirFS(fixtures[0]), ".")
 	be.NilErr(t, err)
 	newObj, err := root.NewObject(ctx, "ark:xyz/987")
 	be.NilErr(t, err)
