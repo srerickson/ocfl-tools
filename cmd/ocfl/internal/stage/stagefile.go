@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"iter"
 	"log/slog"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -20,7 +21,7 @@ import (
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
-	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/util"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
 // StageFile reprepresent a local stage file for building updates
@@ -81,7 +82,7 @@ func NewStageFile(obj *ocfl.Object, newAlg string) (*StageFile, error) {
 		stage.NextHead = next
 		stage.NextState = inv.Version(0).State().PathMap()
 		stage.AlgID = inv.DigestAlgorithm().ID()
-		stage.ExistingDigests = inv.Manifest().Digests()
+		stage.ExistingDigests = slices.Collect(maps.Keys(inv.Manifest()))
 	}
 	return stage, nil
 }
@@ -187,7 +188,7 @@ func (s *StageFile) AddDir(ctx context.Context, localDir string, opts ...AddOpti
 	if !fs.ValidPath(addConf.as) {
 		return fmt.Errorf("invalid directory name: %s", addConf.as)
 	}
-	localFS := ocfl.DirFS(localDir)
+	localFS := ocflfs.DirFS(localDir)
 	if addConf.gos < 1 {
 		addConf.gos = runtime.NumCPU()
 	}
@@ -212,7 +213,7 @@ func (s *StageFile) AddDir(ctx context.Context, localDir string, opts ...AddOpti
 				// stat name relative to 'as'
 				statName = strings.TrimPrefix(p, addConf.as+"/")
 			}
-			_, err := ocfl.StatFile(ctx, localFS, statName)
+			_, err := ocflfs.StatFile(ctx, localFS, statName)
 			if err == nil {
 				continue
 			}
@@ -230,11 +231,11 @@ func (s *StageFile) AddDir(ctx context.Context, localDir string, opts ...AddOpti
 			return err
 		}
 	}
-	filesIter, walkErr := ocfl.WalkFiles(ctx, localFS, ".")
+	filesIter, walkErr := ocflfs.UntilErr(ocflfs.WalkFiles(ctx, localFS, "."))
 	if !addConf.withHidden {
-		filesIter = filesIter.IgnoreHidden()
+		filesIter = ocflfs.FilterFiles(filesIter, ocflfs.IsNotHidden)
 	}
-	for result, err := range filesIter.DigestBatch(ctx, addConf.gos, alg, fixity...) {
+	for result, err := range digest.DigestFilesBatch(ctx, filesIter, addConf.gos, alg, fixity...) {
 		if err != nil {
 			return err
 		}
@@ -358,14 +359,14 @@ func (s *StageFile) BuildCommit(name, email, message string) (*ocfl.Commit, erro
 }
 
 // stage implements ocfl.ContentSource
-func (s StageFile) GetContent(digest string) (ocfl.FS, string) {
+func (s StageFile) GetContent(digest string) (ocflfs.FS, string) {
 	localFile := s.LocalContent[digest]
 	if localFile == nil {
 		return nil, ""
 	}
 	dir := filepath.Dir(localFile.Path)
 	name := filepath.Base(localFile.Path)
-	return ocfl.DirFS(dir), name
+	return ocflfs.DirFS(dir), name
 }
 
 // stage implements ocfl.FixitySource
@@ -375,7 +376,7 @@ func (s StageFile) GetFixity(digest string) digest.Set {
 
 // Write a list of filenames to the writer
 func (s *StageFile) List(w io.Writer, withDigests bool) {
-	for p, digest := range util.PathMapEachPath(s.NextState) {
+	for p, digest := range s.NextState.SortedPaths() {
 		if withDigests {
 			fmt.Fprintln(w, digest, p)
 			continue
@@ -393,7 +394,7 @@ func (s *StageFile) Remove(logicalPath string, recursive bool) error {
 		// delete everything
 		s.NextState = ocfl.PathMap{}
 	default:
-		for p := range util.PathMapEachPath(s.NextState) {
+		for p := range s.NextState {
 			recursiveMatch := recursive && (strings.HasPrefix(p, toDelete+"/"))
 			if p == toDelete || recursiveMatch {
 				delete(s.NextState, p)
@@ -413,7 +414,7 @@ func (s *StageFile) SetLogger(l *slog.Logger) {
 // Add adds a digestsed file to the stage as logical path.
 func (s *StageFile) add(logical string, local *LocalFile, digests digest.Set) error {
 	prevDigest := s.NextState[logical]
-	newDigest := digests.Delete(s.AlgID)
+	newDigest, fixity := digests.Split(s.AlgID)
 	if prevDigest != newDigest {
 		if conflict := pathConflict(s.NextState, logical); conflict != "" {
 			err := fmt.Errorf("can't add %q because of conflict with %q", logical, conflict)
@@ -428,8 +429,8 @@ func (s *StageFile) add(logical string, local *LocalFile, digests digest.Set) er
 		}
 		s.NextState[logical] = newDigest
 	}
-	if len(digests) > 0 {
-		s.Fixity[newDigest] = digests
+	if len(fixity) > 0 {
+		s.Fixity[newDigest] = fixity
 	}
 	alreadyCommitted := slices.Contains(s.ExistingDigests, newDigest)
 	_, alreadyStaged := s.LocalContent[newDigest]

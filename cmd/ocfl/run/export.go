@@ -8,12 +8,15 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+
+	"github.com/srerickson/ocfl-go"
 )
 
 const exportHelp = "Export object contents to the local filesystem"
 
 type ExportCmd struct {
 	ID       string   `name:"id" short:"i" help:"The ID for the object to export"`
+	ObjPath  string   `name:"object" help:"full path to object root. If set, --root and --id are ignored."`
 	Version  int      `name:"version" short:"v" default:"0" help:"The number (unpadded) of the object version from which to export content"`
 	Replace  bool     `name:"replace" help:"replace existing files with object contents"`
 	SrcDir   string   `name:"dir" short:"d" default:"." help:"An object directory to export. Defaults to the object's logical root. Ignored if --file is set."`
@@ -22,18 +25,8 @@ type ExportCmd struct {
 }
 
 func (cmd *ExportCmd) Run(g *globals) error {
-	root, err := g.getRoot()
+	obj, err := g.newObject(cmd.ID, cmd.ObjPath, ocfl.ObjectMustExist())
 	if err != nil {
-		return err
-	}
-	// list contents of an object
-	obj, err := root.NewObject(g.ctx, cmd.ID)
-	if err != nil {
-		return fmt.Errorf("reading object id: %q: %w", cmd.ID, err)
-	}
-	if !obj.Exists() {
-		// the object doesn't exist at the expected location
-		err := fmt.Errorf("object %q not found at root path %s: %w", cmd.ID, obj.Path(), fs.ErrNotExist)
 		return err
 	}
 	versionFS, err := obj.OpenVersion(g.ctx, cmd.Version)
