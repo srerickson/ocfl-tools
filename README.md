@@ -62,10 +62,10 @@ export AWS_SECRET_ACCESS_KEY="..."
 
 [Path-style S3 requests](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html#path-style-access) can be enabled by setting `OCFL_S3_PATHSTYLE=true`.
 
-Some non-AWS S3 implementations may return errors due to [API
-changes](https://github.com/aws/aws-sdk-go-v2/discussions/2960). If you see the
-error, "`XAmzContentSHA256Mismatch`", try disabling request checksums using:
-`OCFL_S3_CHECKSUM_WHEN_REQUIRED=true`.
+Some non-AWS S3 implementations may return errors due to [changes in the AWS
+SDK](https://github.com/aws/aws-sdk-go-v2/discussions/2960). If you see an error
+like "`XAmzContentSHA256Mismatch`", try using MD5 (instead of CRC32) for S3
+requests that require checksums: `OCFL_S3_MD5_CHECKSUMS=true`.
 
 ## Installation
 
