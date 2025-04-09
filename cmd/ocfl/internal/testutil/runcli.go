@@ -25,6 +25,7 @@ func RunCLIInput(args []string, env map[string]string, input string, expect func
 	if S3Enabled() {
 		env["AWS_ENDPOINT_URL"] = S3Endpoint()
 		env["OCFL_S3_PATHSTYLE"] = "true"
+		//env["OCFL_S3_MD5_CHECKSUMS"] = "true"
 	}
 	err := run.CLI(ctx, args, stdin, stdout, stderr, getenv)
 	expect(err, stdout.String(), stderr.String())
