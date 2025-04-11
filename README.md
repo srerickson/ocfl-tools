@@ -77,7 +77,7 @@ ocfl log --id ark://abc/123
 ocfl log --root /mnt/data/my-root --id ark://abc/123
 ```
 
-#### object paths
+#### Object paths
 
 Many commands accepts an `--object` flag that allows you to specify an object
 using its full path, rather than its  ID. This is helpful, for example, if the
@@ -118,7 +118,7 @@ There are a few additional S3 configuration options:
   implementations [(see
   discussion here)](https://github.com/aws/aws-sdk-go-v2/discussions/2960).
 
-#### read objects using HTTP
+#### Read objects using HTTP
 
 For read-only access to OCFL objects over http, you can use the URL of the object's root directory.
 
@@ -136,7 +136,7 @@ Use `ocfl init-root` to create a new storage root. A root path must be set with
 ocfl init-root --root s3://my-bucket/my-root --description "my new root"
 ```
 
-#### storage root layouts
+#### Storage root layouts
 
 New storage roots use the hashed n-tuple layout
 (`0004-hashed-n-tuple-storage-layout`) by default. The `--layout` flag can be
