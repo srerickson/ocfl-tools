@@ -30,6 +30,7 @@ func TestExport(t *testing.T) {
 			be.NilErr(t, err)
 			// exported file exists
 			_, err = fs.Stat(os.DirFS(to), "a_file.txt")
+			be.In(t, "a_file.txt", stderr) // log message report file was copied
 			be.NilErr(t, err)
 		})
 	})
