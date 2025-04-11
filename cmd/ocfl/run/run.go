@@ -179,6 +179,7 @@ func (g *globals) parseLocation(loc string) (ocflfs.FS, string, error) {
 		if strings.EqualFold(g.getenv(envVarS3MD5Checksums), "true") {
 			// Reinstating MD5 for checksum-required operations
 			// https://github.com/aws/aws-sdk-go-v2/discussions/2960
+			awsOpts = append(awsOpts, config.WithResponseChecksumValidation(aws.ResponseChecksumValidationWhenRequired))
 			awsOpts = append(awsOpts, config.WithRequestChecksumCalculation(aws.RequestChecksumCalculationWhenRequired))
 			s3Opts = append(s3Opts, func(o *s3.Options) {
 				o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
