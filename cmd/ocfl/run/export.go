@@ -1,10 +1,12 @@
 package run
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -60,7 +62,7 @@ func (cmd *ExportCmd) Run(g *globals) error {
 		if err != nil {
 			return err
 		}
-		return copyFS(absTo, subFS, cmd.Replace)
+		return exportFS(g.ctx, g.logger, absTo, subFS, cmd.Replace)
 	}
 	var matches []string
 	for _, srcFile := range cmd.SrcFiles {
@@ -156,36 +158,39 @@ func stat(dir string) (exists bool, isDir bool, err error) {
 	return true, info.IsDir(), nil
 }
 
-func copyFS(dir string, fsys fs.FS, replace bool) error {
-	return fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+func exportFS(ctx context.Context, logger *slog.Logger, dstDir string, srcFS fs.FS, replace bool) error {
+	return fs.WalkDir(srcFS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		newPath := filepath.Join(dir, filepath.FromSlash(path))
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		dstPath := filepath.Join(dstDir, filepath.FromSlash(path))
 		if d.IsDir() {
-			return os.MkdirAll(newPath, 0777)
+			return os.MkdirAll(dstPath, 0755)
 		}
-		r, err := fsys.Open(path)
+		srcFile, err := srcFS.Open(path)
 		if err != nil {
 			return err
 		}
-		defer r.Close()
-		info, err := r.Stat()
-		if err != nil {
-			return err
-		}
+		defer srcFile.Close()
 		fileFlag := os.O_CREATE | os.O_WRONLY | os.O_EXCL
 		if replace {
 			fileFlag = os.O_CREATE | os.O_TRUNC | os.O_WRONLY
 		}
-		w, err := os.OpenFile(newPath, fileFlag, 0666|info.Mode()&0777)
+		w, err := os.OpenFile(dstPath, fileFlag, 0644)
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(w, r); err != nil {
+		if _, err := io.Copy(w, srcFile); err != nil {
 			w.Close()
-			return &os.PathError{Op: "Copy", Path: newPath, Err: err}
+			return &os.PathError{Op: "copy", Path: dstPath, Err: err}
 		}
-		return w.Close()
+		if err := w.Close(); err != nil {
+			return err
+		}
+		logger.Log(ctx, slog.LevelInfo, "copied", "file", dstPath)
+		return nil
 	})
 }
