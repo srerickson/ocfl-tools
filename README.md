@@ -1,8 +1,33 @@
 # OCFL Tools
 
-This repository provides a command line tool (`ocfl`) for working with
-[OCFL-based repositories](http://ocfl.io). It supports basic operations for
-creating, accessing, and updating objects in an OCFL storage root:
+This repo provides `ocfl`, a command line tool for working with [OCFL-based
+repositories](http://ocfl.io). It supports basic operations, such as creating,
+accessing, updating, and removing objects in an OCFL storage root. Multiple
+storage backends are supported, including the local filesystem, S3, and http
+(read-only).
+
+
+## Installation
+
+Using [Homebrew](https://brew.sh/) on MacOS or Linux: 
+
+```sh
+brew install srerickson/ocfl-tools/ocfl
+```
+
+If you have [Go](https://go.dev/dl) (v1.23 or greater) installed:
+
+```sh
+go install github.com/srerickson/ocfl-tools/cmd/ocfl@latest
+```
+
+You can also download and run the pre-compiled binaries on the [Releases
+page](https://github.com/srerickson/ocfl-tools/releases)
+
+## Usage
+
+The `ocfl` command includes a collection of subcommands for different
+operations. Use `ocfl --help` to see a list of available subcommands:
 
 ```
 Usage: ocfl <command> [flags]
@@ -36,22 +61,48 @@ Commands:
 Run "ocfl <command> --help" for more information on a command.
 ```
 
-## Usage
+### Configuration
 
-### S3 Configuration
-
-To access OCFL storage roots on S3, set `--root` or `$OCFL_ROOT` with the bucket and prefix:
+To work with objects using their IDs, you need to specify an OCFL storage root.
+(The storage must also define a storage root layout). You can configure the
+storage root location using the `OCFL_ROOT` environment variable or by setting it
+explicitly with the `--root` flag, used by most commands. 
 
 ```sh
-# set root with flag
-ocfl ls --root="s3://my-bucket/my-root"
+# configure storage root using an environment variable
+export OCFL_ROOT=/mnt/data/my-root
+ocfl log --id ark://abc/123
 
-# OR set root with environment variable
-export OCFL_ROOT="s3://my-bucket/my-root"
-ocfl ls
+# or set using the --root flag
+ocfl log --root /mnt/data/my-root --id ark://abc/123
 ```
 
-The S3 client is configurable using AWS configuration files (e.g., `~/.aws/credentials`) and environment variables:
+#### object paths
+
+Many commands accepts an `--object` flag that allows you to specify an object
+using its full path, rather than its  ID. This is helpful, for example, if the
+storage root's layout isn't defined, isn't known, or if the object isn't part of
+a storage root. The object path supports multiple protocols:
+
+```sh
+# object on local filesystem
+ocfl log --object /mnt/data/my-root/my-object
+
+# object stored in S3 
+ocfl log --object s3://my-bucket/my-root/my-object
+```
+
+#### S3 configuration
+
+To use S3-based storage, the storage root or object path should have the format:
+`s3://<bucket>/<prefix>`. For example:
+
+```sh
+# list objects in the root
+ocfl ls --root s3://my-bucket/my-root
+```
+
+The S3 client can be configured using AWS configuration files (e.g., `~/.aws/credentials`) or environment variables:
 
 ```sh
 export AWS_ENDPOINT_URL="..."
@@ -60,28 +111,26 @@ export AWS_ACCESS_KEY_ID="..."
 export AWS_SECRET_ACCESS_KEY="..."
 ```
 
-[Path-style S3 requests](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html#path-style-access) can be enabled by setting `OCFL_S3_PATHSTYLE=true`.
+There are a few additional S3 configuration options:
+- `OCFL_S3_PATHSTYLE=true`: enables [path-style S3 requests](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html#path-style-access)
+- `OCFL_S3_MD5_CHECKSUMS=true`: use MD5 (instead of CRC32) for S3 requests that
+  require checksums. This is sometimes needed to support non-AWS S3
+  implementations [(see
+  discussion here)](https://github.com/aws/aws-sdk-go-v2/discussions/2960).
 
-Some non-AWS S3 implementations may return errors due to [changes in the AWS
-SDK](https://github.com/aws/aws-sdk-go-v2/discussions/2960). If you see an error
-like "`XAmzContentSHA256Mismatch`", try using MD5 (instead of CRC32) for S3
-requests that require checksums: `OCFL_S3_MD5_CHECKSUMS=true`.
+#### Read objects using HTTP
 
-## Installation
-
-Using Homebrew: `brew install srerickson/ocfl-tools/ocfl`
-
-You can also build and install `ocfl` locally using [Go](https://go.dev/dl) (v1.23 or greater):
+For read-only access to OCFL objects over http, you can use the URL of the object's root directory.
 
 ```sh
-go install github.com/srerickson/ocfl-tools/cmd/ocfl@latest
+ocfl ls --object https://dreamlab-public.s3.us-west-2.amazonaws.com/ocfl/content-fixtures
 ```
 
 ## Development
 
 ### Testing with S3
 
-To enable S3 tests, set `$OCFL_TEST_S3`:
+To enable S3 tests, set `$OCFL_TEST_S3`.
 
 ```sh
 # example using minio
