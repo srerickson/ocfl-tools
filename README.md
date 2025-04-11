@@ -65,7 +65,7 @@ Run "ocfl <command> --help" for more information on a command.
 
 To work with objects using their IDs, you need to specify an OCFL storage root.
 (The storage must also define a storage root layout). You can configure the
-storage root location using the `OCFL_ROOT` environment variable or by setting it
+storage root location using the `$OCFL_ROOT` environment variable or by setting it
 explicitly with the `--root` flag, used by most commands. 
 
 ```sh
@@ -118,13 +118,51 @@ There are a few additional S3 configuration options:
   implementations [(see
   discussion here)](https://github.com/aws/aws-sdk-go-v2/discussions/2960).
 
-#### Read objects using HTTP
+#### read objects using HTTP
 
 For read-only access to OCFL objects over http, you can use the URL of the object's root directory.
 
 ```sh
 ocfl ls --object https://dreamlab-public.s3.us-west-2.amazonaws.com/ocfl/content-fixtures
 ```
+
+### Creating a Storage Root
+
+Use `ocfl init-root` to create a new storage root. A root path must be set with
+`$OCFL_ROOT`, or `--root`. 
+
+```sh
+# create a new storage root using s3
+ocfl init-root --root s3://my-bucket/my-root --description "my new root"
+```
+
+#### storage root layouts
+
+New storage roots use the hashed n-tuple layout
+(`0004-hashed-n-tuple-storage-layout`) by default. The `--layout` flag can be
+used to specify a different layout. The following layouts are supported:
+
+- `0002-flat-direct-storage-layout`
+- `0003-hash-and-id-n-tuple-storage-layout`
+- `0004-hashed-n-tuple-storage-layout`
+- `0006-flat-omit-prefix-storage-layout`
+- `0007-n-tuple-omit-prefix-storage-layout`
+
+See [OCFL's extensions
+documentation](https://github.com/OCFL/extensions/tree/main/docs) for
+descriptions of each.
+
+Layouts are initialized with default configuration settings. If you need to
+change the layout's configuration, you must manually edit the layout's
+`config.json` file. It's very important to do this *before* adding objects to
+the storage root! 
+
+Some layouts do not have valid default configurations
+(e.g.,`0006-flat-omit-prefix-storage-layout`). In these cases, you *must*
+manually update the `config.json` before using the storage root. 
+
+The command `ocfl info` will report errors if the storage root's layout
+configuration is invalid.
 
 ## Development
 
