@@ -4,24 +4,18 @@
   <h1>{{ .ID }}</h1>
   {{ with .Head }}
   
- 
-
   <h2>Files</h2>
-  <div>
+  <ul class="files">
     {{ range $logical, $file := .Files }}
-    <details>
-      <summary>
-        <a href="{{ downloadPath $.ID $file.Path }}" download="{{ basename $logical }}">
-          {{ $logical }}
-        </a>
-        {{ with $file.Info }}
-          (<code>{{ humanFileSize .Size }}</code>)
-        {{ end }}
-      </summary>
-      <p></p>
-    </details>
+    <li>
+      {{ $logical }}
+      <a href="{{ downloadPath $.ID $file.Path }}" download="{{ basename $logical }}">⇣</a>
+      {{ with $file.Info }}
+        ({{ humanFileSize .Size }})
+      {{ end }}
+    </li>
     {{ end }}
-  </div>
+  </ul>
 
   <!-- version information -->
   <details>

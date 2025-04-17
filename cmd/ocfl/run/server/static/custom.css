@@ -1,0 +1,17 @@
+
+ul.files {
+    padding: 0;
+}
+ul.files > li {
+    list-style: none;
+    padding: 0.7rem 1rem;
+    background-color: var(--accent-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--standard-border-radius);
+    margin-bottom: 1rem;
+    font-size: 0.85rem;
+}
+
+ul.files a {
+    text-decoration: none;
+}
