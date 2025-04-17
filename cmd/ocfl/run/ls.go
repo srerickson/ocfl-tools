@@ -2,6 +2,7 @@ package run
 
 import (
 	"fmt"
+	"io/fs"
 
 	"github.com/srerickson/ocfl-go"
 )
@@ -34,17 +35,23 @@ func (cmd *LsCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	ver := obj.Inventory().Version(cmd.Version)
-	if ver == nil {
-		err := fmt.Errorf("version %d not found in object %q", cmd.Version, cmd.ID)
+	verF, err := obj.OpenVersion(g.ctx, cmd.Version)
+	if err != nil {
 		return err
 	}
-	for path, digest := range ver.State().PathMap().SortedPaths() {
-		if cmd.WithDigests {
-			fmt.Fprintln(g.stdout, digest, path)
-			continue
+	fs.WalkDir(verF, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
-		fmt.Fprintln(g.stdout, path)
-	}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(g.stdout, "%s %d\n", path, info.Size())
+		return nil
+	})
 	return nil
 }
