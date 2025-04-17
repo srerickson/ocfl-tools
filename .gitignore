@@ -2,3 +2,5 @@
 .tool-versions
 cmd/ocfl/ocfl
 dist/
+tmp/
+.vscode/

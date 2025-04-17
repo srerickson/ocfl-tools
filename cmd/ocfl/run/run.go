@@ -61,6 +61,7 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			"init_root_help": initRootHelp,
 			"ls_help":        lsHelp,
 			"log_help":       logHelp,
+			"server_help":    serverHelp,
 			"stage_help":     stageHelp,
 			"validate_help":  validateHelp,
 			"env_root":       envVarRoot,
@@ -117,6 +118,7 @@ var cli struct {
 	InitRoot InitRootCmd `cmd:"" help:"${init_root_help}"`
 	Log      LogCmd      `cmd:"" help:"${log_help}"`
 	Ls       LsCmd       `cmd:"" help:"${ls_help}"`
+	Server   ServerCmd   `cmd:"" help:"${server_help}"`
 	Stage    StageCmd    `cmd:"" help:"${stage_help}"`
 	Validate ValidateCmd `cmd:"" help:"${validate_help}"`
 	Version  VersionCmd  `cmd:"" help:"Print ocfl-tools version information"`
