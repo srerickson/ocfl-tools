@@ -30,15 +30,15 @@ type Templates struct {
 }
 
 func ReadTemplates() (*Templates, error) {
-	indexView, err := template.New("index").Funcs(templateFuncs).ParseFS(templateFS, "templates/base.tmpl.html", "templates/index.tmpl.html")
+	indexView, err := template.New("index").Funcs(templateFuncs).ParseFS(templateFS,
+		"templates/base.tmpl.html",
+		"templates/index.tmpl.html")
 	if err != nil {
 		return nil, err
 	}
 	objectView, err := template.New("object").Funcs(templateFuncs).ParseFS(templateFS,
 		"templates/base.tmpl.html",
 		"templates/object.tmpl.html",
-		"templates/filetree.tmpl.html",
-		"templates/filelist.tmpl.html",
 	)
 	if err != nil {
 		return nil, err

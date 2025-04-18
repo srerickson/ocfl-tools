@@ -46,21 +46,21 @@ main {
     min-inline-size: 50%;
 }
 
-.filelist > ul {
+.object-files .detail > ul {
     list-style: none;
 }
 
-.filelist li {
+.object-files .detail li {
     display: flex;
     border-bottom: 1px solid #c7c7c7;
 
 }
 
-.filelist li > .filename {
+.object-files .detail li > .name {
     margin-right: auto;
 }
 
-.filelist li a {
+.object-files .detail li a {
     text-decoration: none;
 }
 

@@ -1,13 +1,75 @@
 {{ define "main" }}
 <h1>{{ .ID }}</h1>
-
 <section class="object-files">
   <div class="filetree">
     {{ template "filetree" .FileTree }}
   </div>
-  <div class="filelist">
-    {{ template "filelist" .FileTree.Active }}
-  </div>
+  {{ with .FileTree.Active }}
+    {{ if .IsDir }}
+      <div class="dir detail">
+        {{ template "dir-detail" . }}
+      </div>
+    {{ else }}
+      <div class="file detail">
+        {{ template "file-detail" . }}
+      </div>
+    {{ end }}
+  {{ end }}
 </section>
+{{ end }}
 
+
+{{ define "filetree" }}
+	<ul>
+		{{ range $childName, $child := .Children }}
+		<li>
+			{{ if $child.IsDir }}
+				<!-- directory entry -->
+				<details {{ if $child.IsActive }} open="" {{ end }}>
+					<summary class="dir name">
+						<a href="{{ objectPath $.ObjectID $child.Path }}"> {{ $childName }} </a>
+					</summary>
+					{{ template "filetree" $child }}
+				</details>
+			{{ else }}
+				<!-- file entry -->
+				<a href="{{ objectPath $.ObjectID $child.Path }}"> {{ $childName }} </a>
+			{{ end }}
+		</li>
+		{{ end }}
+	</ul>
+{{ end }}
+
+
+{{ define "dir-detail" }}
+    <ul>
+        {{ with .Parent }}
+          <li>
+            <div class="name">
+              <a href="{{ objectPath $.ObjectID .Path }}">..</a>
+            </div> 
+          </li>
+        {{ end }}
+
+        {{ range $childName, $child := .Children }}
+        <li>
+          <div class="name">
+            <a href="{{ objectPath $.ObjectID $child.Path }}"> {{ $childName }} </a>
+          </div> 
+          {{ if not $child.IsDir }}
+          <!-- file entry -->
+          <div class="fileinfo">
+            {{ with $child.File.Info }}
+              ({{ humanFileSize .Size }})
+            {{ end }}
+            <a href="{{ downloadPath $.ObjectID $child.File.Path }}" download="{{ $childName }}">⇣</a>
+          </div>
+          {{ end }}
+        </li>
+        {{ end }}
+    </ul>
+{{ end }}
+
+{{ define "file-detail" }}
+    this is a file -- TODO
 {{ end }}
