@@ -3,7 +3,7 @@
 <ul>
 {{ range .Objects }}
     <li>
-        <span><a href="{{ objectPath .ID }}">{{ .ID }}</a></span>
+        <span><a href="{{ objectPath .ID `` }}">{{ .ID }}</a></span>
         <span>{{ .Head }}</span>
         <span>{{ formatDate .HeadCreated }}</span>
     </li>    

@@ -4,6 +4,7 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"net/url"
 	"path"
 	"time"
@@ -37,6 +38,7 @@ func ReadTemplates() (*Templates, error) {
 		"templates/base.tmpl.html",
 		"templates/object.tmpl.html",
 		"templates/filetree.tmpl.html",
+		"templates/filelist.tmpl.html",
 	)
 	if err != nil {
 		return nil, err
@@ -48,11 +50,15 @@ func ReadTemplates() (*Templates, error) {
 	return views, nil
 }
 
-func objectPath(id string) string {
+func objectPath(id string, logicalPath string) string {
 	if id == "" {
 		return ""
 	}
-	return "/object/" + url.PathEscape(id)
+	urlPath := "/object/" + url.PathEscape(id)
+	if fs.ValidPath(logicalPath) {
+		urlPath += "?path=" + url.QueryEscape(logicalPath)
+	}
+	return urlPath
 }
 
 func downloadPath(id string, contentPath string) string {

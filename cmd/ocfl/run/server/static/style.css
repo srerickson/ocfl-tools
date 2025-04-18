@@ -1,0 +1,110 @@
+:root {
+    --measure: 120ch;
+    --ratio: 1.2;
+    --s-6: calc(var(--s-5) / var(--ratio));
+    --s-5: calc(var(--s-4) / var(--ratio));
+    --s-4: calc(var(--s-3) / var(--ratio));
+    --s-3: calc(var(--s-2) / var(--ratio));
+    --s-2: calc(var(--s-1) / var(--ratio));
+    --s-1: calc(var(--s0) / var(--ratio));
+    --s0: 1rem;
+    --s1: calc(var(--s0) * var(--ratio));
+    --s2: calc(var(--s1) * var(--ratio));
+    --s3: calc(var(--s2) * var(--ratio));
+    --s4: calc(var(--s3) * var(--ratio));
+    --s5: calc(var(--s4) * var(--ratio));
+
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "IBM Plex Sans", Segoe UI, Helvetica, Arial, sans-serif;
+    /* font-size: var(--s1); */
+}
+  
+*, ::after, ::before {
+    margin: 0;
+    padding: 0;
+}
+
+main {
+    box-sizing: content-box;
+    margin-inline: auto;
+    max-inline-size: var(--measure);
+}
+
+.object-files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s1);
+    font-size: var(--s-1);
+}
+
+.object-files > :first-child {
+    flex-grow: 1;
+}
+  
+.object-files > :last-child {
+    flex-basis: 0;
+    flex-grow: 999;
+    min-inline-size: 50%;
+}
+
+.filelist > ul {
+    list-style: none;
+}
+
+.filelist li {
+    display: flex;
+    border-bottom: 1px solid #c7c7c7;
+
+}
+
+.filelist li > .filename {
+    margin-right: auto;
+}
+
+.filelist li a {
+    text-decoration: none;
+}
+
+.filetree {
+    --spacing: var(--s-2);
+}
+
+.filetree ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+
+.filetree li {
+    padding-left: var(--spacing);
+    margin-left: 3px;
+}
+
+.filetree ul li {
+    border-left: 1px solid #c7c7c7;
+}
+
+.filetree > ul > li {
+    padding-left: 0;
+    border-left: none;
+}
+
+.filetree details {
+    margin:0 ;
+    padding: 0;
+    border: none;
+    background: none;
+    width: 100%;
+}
+
+.filetree summary {
+    cursor: pointer;
+    margin:0 ;
+    padding: 0;
+    font-weight: normal;
+    /* list-style: none; */
+}
+
+.filetree details[open] > summary {
+    margin-bottom: 0;
+}

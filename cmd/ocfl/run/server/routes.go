@@ -25,7 +25,7 @@ func addRoutes(
 ) {
 	mux.Handle("/static/", http.FileServerFS(staticFS))
 	mux.HandleFunc("GET /{$}", handleIndex(index, tmpl.Index))
-	mux.HandleFunc("GET /object/{id}", handleObject(logger, root, index, tmpl.Object))
+	mux.HandleFunc("GET /object/{id...}", handleObject(logger, root, index, tmpl.Object))
 	mux.HandleFunc("GET /download/{id}/{name}", handleDownload(logger, root, index))
 }
 
@@ -86,6 +86,8 @@ func handleObject(logger *slog.Logger, root *ocfl.Root, index RootIndex, view *t
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		id := r.PathValue("id")
+		statePath := r.URL.Query().Get("path")
+		version := r.URL.Query().Get("version")
 		var obj *ocfl.Object
 		var err error
 		switch {
@@ -108,7 +110,7 @@ func handleObject(logger *slog.Logger, root *ocfl.Root, index RootIndex, view *t
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		templateData, err := NewObject(ctx, obj)
+		templateData, err := NewObject(ctx, obj, version, statePath)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

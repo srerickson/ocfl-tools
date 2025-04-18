@@ -1,10 +1,13 @@
-
 {{ define "main" }}
-<section>
+<h1>{{ .ID }}</h1>
 
-  <h1>{{ .ID }}</h1>
-  <h2>Files</h2>
-  {{ template "filetree" .Files }}
-
+<section class="object-files">
+  <div class="filetree">
+    {{ template "filetree" .FileTree }}
+  </div>
+  <div class="filelist">
+    {{ template "filelist" .FileTree.Active }}
+  </div>
 </section>
+
 {{ end }}

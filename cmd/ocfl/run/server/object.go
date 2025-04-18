@@ -3,8 +3,10 @@ package server
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"iter"
 	"maps"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -15,18 +17,22 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func NewObject(ctx context.Context, base *ocfl.Object) (*Object, error) {
+func NewObject(ctx context.Context, base *ocfl.Object, v string, logicalPath string) (*Object, error) {
 	inv := base.Inventory()
 	if inv == nil {
 		return nil, errors.New("object doesn't exist")
 	}
-	vnum := inv.Head()
+	var vnum ocfl.VNum
+	ocfl.ParseVNum(v, &vnum)
 	ver := base.Inventory().Version(vnum.Num())
 	if ver == nil {
 		return nil, errors.New("object version doesn't exist")
 	}
-	files := fileTree(base, vnum.Num())
-	if err := files.statFiles(ctx, 5); err != nil {
+	rootTree := NewFileTree(base, vnum.Num())
+	if fs.ValidPath(logicalPath) {
+		rootTree.ActivePath = logicalPath
+	}
+	if err := rootTree.Active().statFiles(ctx, 5); err != nil {
 		return nil, err
 	}
 	obj := &Object{
@@ -36,8 +42,7 @@ func NewObject(ctx context.Context, base *ocfl.Object) (*Object, error) {
 		Message:         ver.Message(),
 		Created:         ver.Created(),
 		User:            ver.User(),
-		Files:           files,
-		//Versions:        make([]ObjectVersion, len(vers)-1),
+		FileTree:        rootTree,
 	}
 	// slices.Reverse(vers)
 	// for i, vnum := range vers {
@@ -68,25 +73,64 @@ type Object struct {
 	Message         string
 	User            *ocfl.User
 	Created         time.Time
-	Files           *FileTree
+	// Path            string
+	FileTree *FileTree // tree for entire root
 }
 
 type FileTree struct {
-	ObjectID string               // Object ID
-	File     *digest.FileRef      // file contents
-	children map[string]*FileTree // directory contents
+	*FileTreeNode // root
+	ObjectID      string
+	ActivePath    string
 }
 
-func (n *FileTree) add(logicalName string, contentFile *digest.FileRef) {
+func (ft FileTree) Active() *FileTree {
+	node := ft.FileTreeNode.get(ft.ActivePath)
+	return &FileTree{
+		FileTreeNode: node,
+		ObjectID:     ft.ObjectID,
+		ActivePath:   ft.ActivePath,
+	}
+}
+
+func (ft FileTree) IsActive() bool {
+	if ft.Path() == ft.ActivePath {
+		return true
+	}
+	return strings.HasPrefix(ft.ActivePath, ft.Path()+"/")
+}
+
+func (ft *FileTree) Children() iter.Seq2[string, *FileTree] {
+	return func(yield func(string, *FileTree) bool) {
+		for name, node := range ft.FileTreeNode.Children() {
+			subtree := &FileTree{FileTreeNode: node, ObjectID: ft.ObjectID, ActivePath: ft.ActivePath}
+			if !yield(name, subtree) {
+				return
+			}
+		}
+	}
+}
+
+type FileTreeNode struct {
+	//ObjectID string          // Object ID
+	File     *digest.FileRef // file contents
+	Name     string
+	Parent   *FileTreeNode
+	children map[string]*FileTreeNode // directory contents
+}
+
+func (n *FileTreeNode) add(logicalName string, contentFile *digest.FileRef) {
 	childName, nextLogicalName, noSlash := strings.Cut(logicalName, "/")
 	if childName == "" {
 		return
 	}
 	if n.children == nil {
-		n.children = map[string]*FileTree{}
+		n.children = map[string]*FileTreeNode{}
 	}
 	if n.children[childName] == nil {
-		n.children[childName] = &FileTree{ObjectID: n.ObjectID}
+		n.children[childName] = &FileTreeNode{
+			Parent: n,
+			Name:   childName,
+		}
 	}
 	child := n.children[childName]
 	if !noSlash || nextLogicalName == "" {
@@ -96,34 +140,59 @@ func (n *FileTree) add(logicalName string, contentFile *digest.FileRef) {
 	child.add(nextLogicalName, contentFile)
 }
 
-func (n *FileTree) statFiles(ctx context.Context, conc int) error {
+func (n *FileTreeNode) get(name string) *FileTreeNode {
+	if name == "." || name == "" {
+		return n
+	}
+	if n.children == nil {
+		return nil
+	}
+	childName, nextName, _ := strings.Cut(name, "/")
+	child := n.children[childName]
+	if child == nil {
+		return nil
+	}
+	return child.get(nextName)
+}
+
+func (n *FileTreeNode) statFiles(ctx context.Context, conc int) error {
 	grp, ctx := errgroup.WithContext(ctx)
 	grp.SetLimit(conc)
-	vistitFileTree(n, func(ft *FileTree) error {
-		if ft.File == nil {
-			return nil
-		}
-		return ft.File.Stat(ctx)
-	})
+	for _, f := range n.Files() {
+		grp.Go(func() error {
+			return f.File.Stat(ctx)
+		})
+	}
+	// vistitFileTree(n, func(ft *FileTree) error {
+	// 	if ft.File == nil {
+	// 		return nil
+	// 	}
+	// 	return ft.File.Stat(ctx)
+	// })
 	return grp.Wait()
 }
 
-func (n *FileTree) IsDir() bool { return n.File == nil }
-
-func (n *FileTree) Children() iter.Seq2[string, *FileTree] {
-	return func(yield func(string, *FileTree) bool) {
-		names := slices.Collect(maps.Keys(n.children))
-		slices.Sort(names)
-		for _, name := range names {
-			if !yield(name, n.children[name]) {
+// Iterate over children: first all directories, then all files.
+func (n *FileTreeNode) Children() iter.Seq2[string, *FileTreeNode] {
+	return func(yield func(string, *FileTreeNode) bool) {
+		for name, dir := range n.Dirs() {
+			if !yield(name, dir) {
+				return
+			}
+		}
+		for name, dir := range n.Files() {
+			if !yield(name, dir) {
 				return
 			}
 		}
 	}
 }
 
-func (n *FileTree) Dirs() iter.Seq2[string, *FileTree] {
-	return func(yield func(string, *FileTree) bool) {
+func (n *FileTreeNode) IsDir() bool { return n.File == nil }
+
+// iterate over the children that are directories in sorted order
+func (n *FileTreeNode) Dirs() iter.Seq2[string, *FileTreeNode] {
+	return func(yield func(string, *FileTreeNode) bool) {
 		names := slices.Collect(maps.Keys(n.children))
 		slices.Sort(names)
 		for _, name := range names {
@@ -138,8 +207,9 @@ func (n *FileTree) Dirs() iter.Seq2[string, *FileTree] {
 	}
 }
 
-func (n *FileTree) Files() iter.Seq2[string, *FileTree] {
-	return func(yield func(string, *FileTree) bool) {
+// iterate over the children that are files is sorted order
+func (n *FileTreeNode) Files() iter.Seq2[string, *FileTreeNode] {
+	return func(yield func(string, *FileTreeNode) bool) {
 		names := slices.Collect(maps.Keys(n.children))
 		slices.Sort(names)
 		for _, name := range names {
@@ -154,7 +224,14 @@ func (n *FileTree) Files() iter.Seq2[string, *FileTree] {
 	}
 }
 
-func fileTree(obj *ocfl.Object, num int) *FileTree {
+func (n *FileTreeNode) Path() string {
+	if n.Parent == nil {
+		return "."
+	}
+	return path.Join(n.Parent.Path(), n.Name)
+}
+
+func NewFileTree(obj *ocfl.Object, num int) *FileTree {
 	inv := obj.Inventory()
 	if inv == nil {
 		return nil
@@ -164,8 +241,8 @@ func fileTree(obj *ocfl.Object, num int) *FileTree {
 	if version == nil || manifest == nil {
 		return nil
 	}
-	root := &FileTree{
-		ObjectID: obj.ID(),
+	root := &FileTreeNode{
+		// ObjectID: obj.ID(),
 	}
 	statePathMap := version.State().PathMap()
 	fileRefs := map[string]*digest.FileRef{}
@@ -190,14 +267,17 @@ func fileTree(obj *ocfl.Object, num int) *FileTree {
 		}
 		root.add(logicalPath, fileref)
 	}
-	return root
+	return &FileTree{
+		FileTreeNode: root,
+		ObjectID:     obj.ID(),
+	}
 }
 
-func vistitFileTree(node *FileTree, run func(*FileTree) error) error {
-	for _, child := range node.children {
-		if err := vistitFileTree(child, run); err != nil {
-			return err
-		}
-	}
-	return run(node)
-}
+// func vistitFileTree(node *FileTree, run func(*FileTree) error) error {
+// 	for _, child := range node.children {
+// 		if err := vistitFileTree(child, run); err != nil {
+// 			return err
+// 		}
+// 	}
+// 	return run(node)
+// }
