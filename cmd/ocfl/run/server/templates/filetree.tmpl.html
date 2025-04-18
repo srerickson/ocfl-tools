@@ -1,0 +1,31 @@
+{{ define "filetree" }}
+	<ul class="tree">
+		{{ range $childName, $child := .Dirs }}
+		<li>
+			
+			{{ if $child.IsDir }}
+				<!-- directory entry -->
+				<details>
+					<summary class="dir name">{{ $childName }}</summary>
+					{{ template "filetree" $child }}
+				</details>
+			{{ end}}
+		</li>
+		{{ end }}
+		{{ range $childName, $child := .Files }}
+		<li>
+
+			<!-- file entry -->
+			<div class="file name">
+				{{ $childName }}
+			</div> 
+			<div class="file info">
+				{{ with $child.File.Info }}
+				({{ humanFileSize .Size }})
+				{{ end }}
+				<a href="{{ downloadPath $child.ObjectID $child.File.Path }}" download="{{ $childName }}">⇣</a>
+			</div>
+		</li>
+		{{ end }}
+	</ul>
+{{ end }}

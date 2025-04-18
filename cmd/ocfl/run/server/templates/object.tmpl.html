@@ -1,63 +1,10 @@
 
 {{ define "main" }}
 <section>
-  <h1>{{ .ID }}</h1>
-  {{ with .Head }}
-  
-  <h2>Files</h2>
-  <ul class="files">
-    {{ range $logical, $file := .Files }}
-    <li>
-      {{ $logical }}
-      <a href="{{ downloadPath $.ID $file.Path }}" download="{{ basename $logical }}">⇣</a>
-      {{ with $file.Info }}
-        ({{ humanFileSize .Size }})
-      {{ end }}
-    </li>
-    {{ end }}
-  </ul>
 
-  <!-- version information -->
-  <details>
-    <summary>{{ .Num }} version information</summary>
-    <p>
-      
-      {{ formatDate .Created }}: {{ .Message }}
-      {{ with .User }}
-        {{ .Name }}: {{ .Address }}
-      {{ end }}
-    </p>
-  </details>
-  {{ end }}
+  <h1>{{ .ID }}</h1>
+  <h2>Files</h2>
+  {{ template "filetree" .Files }}
 
 </section>
-
-  {{ range .Versions }}
-  <section>
-    <div>
-      <h3>{{ .Num }}: {{ formatDate .Created }}</h3>
-      <p>{{ .Message }}</p>
-    </div>
-    {{ with .Files }}
-    <div>
-      {{ range $logical, $file := . }}
-      <details>
-          <summary>
-            <a href="{{ downloadPath $.ID $file.Path }}" download="{{ basename $logical }}">
-              {{ $logical }}
-            </a>
-            {{ with $file.Info }}
-              (<code>{{ humanFileSize .Size }}</code>)
-            {{ end }}
-          </summary>
-          <p>
-          
-          </p>
-      </details>
-      {{ end }}
-    </div>
-    {{ end }}
-  </section>
-  {{end }}
-
 {{ end }}

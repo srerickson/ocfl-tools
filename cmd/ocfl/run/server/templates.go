@@ -33,7 +33,11 @@ func ReadTemplates() (*Templates, error) {
 	if err != nil {
 		return nil, err
 	}
-	objectView, err := template.New("object").Funcs(templateFuncs).ParseFS(templateFS, "templates/base.tmpl.html", "templates/object.tmpl.html")
+	objectView, err := template.New("object").Funcs(templateFuncs).ParseFS(templateFS,
+		"templates/base.tmpl.html",
+		"templates/object.tmpl.html",
+		"templates/filetree.tmpl.html",
+	)
 	if err != nil {
 		return nil, err
 	}
