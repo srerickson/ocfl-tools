@@ -15,9 +15,17 @@
     --s5: calc(var(--s4) * var(--ratio));
 
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "IBM Plex Sans", Segoe UI, Helvetica, Arial, sans-serif;
-    /* font-size: var(--s1); */
+    font-size: var(--s0);
 }
-  
+
+a {
+    text-decoration: none;
+}
+
+h1 {
+    padding-bottom: var(--s2);
+}
+
 *, ::after, ::before {
     margin: 0;
     padding: 0;
@@ -33,7 +41,6 @@ main {
     display: flex;
     flex-wrap: wrap;
     gap: var(--s1);
-    font-size: var(--s-1);
 }
 
 .object-files > :first-child {
@@ -65,7 +72,26 @@ main {
 }
 
 .filetree {
-    --spacing: var(--s-2);
+    --spacing: var(--s1);
+    font-size: var(--s-1);
+    line-height: var(--s2);
+    border: 1px solid #c7c7c7;
+    padding: var(--s1);
+    border-radius: var(--s0);
+}
+
+.filetree a {
+    color: black;
+}
+
+.filetree svg {
+    color: #c7c7c7;
+    width: var(--s-1);
+    height: var(--s-1);
+}
+
+.filetree details[open] > summary > svg {
+    color: black;
 }
 
 .filetree ul {
@@ -77,7 +103,7 @@ main {
 
 .filetree li {
     padding-left: var(--spacing);
-    margin-left: 3px;
+    white-space : nowrap
 }
 
 .filetree ul li {
@@ -102,7 +128,7 @@ main {
     margin:0 ;
     padding: 0;
     font-weight: normal;
-    /* list-style: none; */
+    list-style: none;
 }
 
 .filetree details[open] > summary {
