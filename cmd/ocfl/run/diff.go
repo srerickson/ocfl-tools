@@ -29,10 +29,6 @@ func (cmd *DiffCmd) Run(g *globals) error {
 		err := fmt.Errorf("object %q not found at root path %s: %w", cmd.ID, obj.Path(), fs.ErrNotExist)
 		return err
 	}
-	inv := obj.Inventory()
-	if inv == nil {
-		return errors.New("unexpected nil inventory")
-	}
 	var v1, v2 int
 	switch len(cmd.Vs) {
 	case 0:
@@ -45,7 +41,7 @@ func (cmd *DiffCmd) Run(g *globals) error {
 		v1 = cmd.Vs[0]
 		v2 = cmd.Vs[1]
 	}
-	head := inv.Head().Num()
+	head := obj.Head().Num()
 	if v1 > head || (head+v1 < 1) {
 		return fmt.Errorf("version %d is out of range (HEAD=%d)", v1, head)
 	}
@@ -59,10 +55,10 @@ func (cmd *DiffCmd) Run(g *globals) error {
 		v2 = head + v2
 	}
 	var v1Paths, v2Paths ocfl.PathMap
-	if v := inv.Version(v1); v != nil && v.State() != nil {
+	if v := obj.Version(v1); v != nil && v.State() != nil {
 		v1Paths = v.State().PathMap()
 	}
-	if v := inv.Version(v2); v != nil && v.State() != nil {
+	if v := obj.Version(v2); v != nil && v.State() != nil {
 		v2Paths = v.State().PathMap()
 	}
 	if v1Paths == nil {

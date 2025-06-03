@@ -31,7 +31,7 @@ func (cmd *ExportCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	versionFS, err := obj.OpenVersion(g.ctx, cmd.Version)
+	versionFS, err := obj.VersionFS(g.ctx, cmd.Version)
 	if err != nil {
 		return err
 	}

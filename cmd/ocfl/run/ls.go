@@ -26,7 +26,7 @@ func (cmd *LsCmd) Run(g *globals) error {
 			if err != nil {
 				return fmt.Errorf("while listing objects in root: %w", err)
 			}
-			fmt.Fprintln(g.stdout, obj.Inventory().ID())
+			fmt.Fprintln(g.stdout, obj.ID())
 		}
 		return nil
 	}
@@ -34,7 +34,7 @@ func (cmd *LsCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	ver := obj.Inventory().Version(cmd.Version)
+	ver := obj.Version(cmd.Version)
 	if ver == nil {
 		err := fmt.Errorf("version %d not found in object %q", cmd.Version, cmd.ID)
 		return err
