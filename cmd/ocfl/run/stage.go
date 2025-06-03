@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -154,24 +155,21 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 	if err != nil {
 		return fmt.Errorf("stage has errors: %w", err)
 	}
-	updateCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
-	defer stop()
-	update, err := obj.Update(
-		updateCtx,
+	updated, err := objectUpdateOrRevert(
+		ctx,
+		obj,
 		stage,
 		cmd.Message,
 		newUser(cmd.Name, cmd.Email),
-		ocfl.UpdateWithLogger(g.logger),
-	)
+		g.logger)
 	if err != nil {
-		if errors.Is(err, context.Canceled) && update != nil {
-			g.logger.Info("received interupt: reverting changes...")
-			return update.Revert(ctx, obj.FS(), obj.Path(), stage.ContentSource)
-		}
-		return fmt.Errorf("creating new object version: %w", err)
+		return err
 	}
-	if err := os.Remove(cmd.File); err != nil {
-		return fmt.Errorf("removing stage file: %w", err)
+	if updated {
+		g.logger.Info("removing stage file", "path", cmd.File)
+		if err := os.Remove(cmd.File); err != nil {
+			return fmt.Errorf("removing stage file: %w", err)
+		}
 	}
 	return nil
 }
@@ -334,4 +332,37 @@ func newUser(name string, email string) ocfl.User {
 		email = "email:" + email
 	}
 	return ocfl.User{Name: name, Address: email}
+}
+
+// objectUpdateOrRevert does an object update, reverting partial updates if
+// os.Interupt is received. The returned bool indicates if the update completed
+// without being interrupted.
+func objectUpdateOrRevert(
+	ctx context.Context,
+	obj *ocfl.Object,
+	stage *ocfl.Stage,
+	msg string,
+	user ocfl.User,
+	logger *slog.Logger,
+	opts ...ocfl.ObjectUpdateOption,
+) (bool, error) {
+	updateCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
+	defer stop()
+	logger.Info("starting object update", "object_id", obj.ID())
+	opts = append(opts, ocfl.UpdateWithLogger(logger))
+	update, err := obj.Update(updateCtx, stage, msg, user, opts...)
+	if err != nil {
+		if errors.Is(err, context.Canceled) && update != nil {
+			logger.Info("object update interrupted: reverting to last valid state")
+			err = update.Revert(ctx, obj.FS(), obj.Path(), stage.ContentSource)
+			if err != nil {
+				return false, fmt.Errorf("while reverting object update: %w", err)
+			}
+			logger.Info("object update was interrupted and successfully reverted")
+			return false, nil
+		}
+		return false, fmt.Errorf("during object update: %w", err)
+	}
+	logger.Info("object update complete", "object_id", obj.ID())
+	return true, nil
 }

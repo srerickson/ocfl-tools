@@ -45,9 +45,6 @@ func (cmd *CommitCmd) Run(g *globals) error {
 	if err != nil {
 		return fmt.Errorf("stage has errors: %w", err)
 	}
-	_, err = obj.Update(ctx, stage, cmd.Message, newUser(cmd.Name, cmd.Email))
-	if err != nil {
-		return fmt.Errorf("creating new object version: %w", err)
-	}
-	return nil
+	_, err = objectUpdateOrRevert(ctx, obj, stage, cmd.Message, newUser(cmd.Name, cmd.Email), g.logger)
+	return err
 }
