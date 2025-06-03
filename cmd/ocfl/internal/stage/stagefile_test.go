@@ -171,10 +171,14 @@ func TestStageFile_ContentErrors(t *testing.T) {
 		be.NilErr(t, err)
 		err = changes.AddDir(ctx, contentFixture)
 		be.NilErr(t, err)
-		// remove a file and update a file
+		// remove a file
 		err = os.Remove(filepath.Join(contentFixture, "hello.csv"))
 		be.NilErr(t, err)
-		err = os.WriteFile(filepath.Join(contentFixture, "folder1", "file.txt"), []byte("new content"), 0644)
+		// modify a file. Note: testdata/content-fixture includes two files with
+		// identical content. This test would be flaky if we modified one of
+		// those files StageFile's local content is deduplicated, and we might
+		// not modify the file that is actually referenced in the StageFile.
+		err = os.WriteFile(filepath.Join(contentFixture, "folder1", "folder2", "sculpture-stone-face-head-888027.jpg"), []byte("new content"), 0644)
 		be.NilErr(t, err)
 		// expect two errors
 		count := 0
@@ -232,6 +236,6 @@ func isHidden(n string) bool {
 }
 
 func stageErrors(stage *stage.StageFile) error {
-	_, err := stage.BuildCommit("name", "email", "message")
+	_, err := stage.Stage()
 	return err
 }

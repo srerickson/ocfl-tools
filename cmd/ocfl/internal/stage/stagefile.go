@@ -74,15 +74,14 @@ func NewStageFile(obj *ocfl.Object, newAlg string) (*StageFile, error) {
 		AlgID:           newAlg,
 	}
 	if obj.Exists() {
-		inv := obj.Inventory()
-		next, err := inv.Head().Next()
+		next, err := obj.Head().Next()
 		if err != nil {
 			return nil, err
 		}
 		stage.NextHead = next
-		stage.NextState = inv.Version(0).State().PathMap()
-		stage.AlgID = inv.DigestAlgorithm().ID()
-		stage.ExistingDigests = slices.Collect(maps.Keys(inv.Manifest()))
+		stage.NextState = obj.Version(0).State().PathMap()
+		stage.AlgID = obj.DigestAlgorithm().ID()
+		stage.ExistingDigests = slices.Collect(maps.Keys(obj.Manifest()))
 	}
 	return stage, nil
 }
@@ -203,7 +202,7 @@ func (s *StageFile) AddDir(ctx context.Context, localDir string, opts ...AddOpti
 	}
 	if addConf.remove {
 		// Remove files before adding to get rid of potential conflicting paths.
-		// Files in new state (under 'as') that aren't in localDir are removed.
+		// Files in new state (under 'as') that don't exist in localDir are removed.
 		for p := range s.NextState {
 			statName := p
 			if addConf.as != "." {
@@ -292,13 +291,11 @@ func (s StageFile) ContentErrors() iter.Seq[error] {
 			if err != nil {
 				err = fmt.Errorf("file is missing or unreadable: %w", err)
 			}
-			if err == nil {
-				if info.Size() != file.Size {
-					err = fmt.Errorf("file has changed (size): %q", name)
-				}
-				if info.ModTime().Compare(file.Modtime) != 0 {
-					err = fmt.Errorf("file has changed (modtime): %q", name)
-				}
+			if err == nil && info.Size() != file.Size {
+				err = fmt.Errorf("file has changed (size): %q", name)
+			}
+			if err == nil && info.ModTime().Compare(file.Modtime) != 0 {
+				err = fmt.Errorf("file has changed (modtime): %q", name)
 			}
 			if err != nil {
 				if !yield(err) {
@@ -319,43 +316,6 @@ func (s StageFile) Write(name string) error {
 		return err
 	}
 	return nil
-}
-
-// BuildCommit returns an ocfl.Commit baesd on stage state.
-func (s *StageFile) BuildCommit(name, email, message string) (*ocfl.Commit, error) {
-	if name == "" {
-		return nil, fmt.Errorf("a name is required for the new object version")
-	}
-	if message == "" {
-		return nil, fmt.Errorf("a message is required for the new object version")
-	}
-	if email != "" && !strings.HasPrefix(`email:`, email) {
-		email = "email:" + email
-	}
-	if err := errors.Join(slices.Collect(s.StateErrors())...); err != nil {
-		return nil, err
-	}
-	if err := errors.Join(slices.Collect(s.ContentErrors())...); err != nil {
-		return nil, err
-	}
-	algs, err := s.Algs()
-	if err != nil {
-		return nil, err
-	}
-	return &ocfl.Commit{
-		ID: s.ID,
-		User: ocfl.User{
-			Name:    name,
-			Address: email,
-		},
-		Message: message,
-		Stage: &ocfl.Stage{
-			State:           s.NextState.DigestMap(),
-			DigestAlgorithm: algs[0],
-			ContentSource:   s,
-			FixitySource:    s,
-		},
-	}, nil
 }
 
 // stage implements ocfl.ContentSource
@@ -405,6 +365,25 @@ func (s *StageFile) Remove(logicalPath string, recursive bool) error {
 		}
 	}
 	return nil
+}
+
+func (s StageFile) Stage() (*ocfl.Stage, error) {
+	if err := errors.Join(slices.Collect(s.StateErrors())...); err != nil {
+		return nil, err
+	}
+	if err := errors.Join(slices.Collect(s.ContentErrors())...); err != nil {
+		return nil, err
+	}
+	algs, err := s.Algs()
+	if err != nil {
+		return nil, err
+	}
+	return &ocfl.Stage{
+		State:           s.NextState.DigestMap(),
+		DigestAlgorithm: algs[0],
+		ContentSource:   s,
+		FixitySource:    s,
+	}, nil
 }
 
 func (s *StageFile) SetLogger(l *slog.Logger) {

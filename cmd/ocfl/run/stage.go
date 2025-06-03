@@ -1,10 +1,13 @@
 package run
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"strings"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
@@ -133,12 +136,11 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	stage, err := stage.ReadStageFile(cmd.File)
+	stageFile, err := stage.ReadStageFile(cmd.File)
 	if err != nil {
 		return err
 	}
-	stage.SetLogger(g.logger)
-	obj, err := root.NewObject(g.ctx, stage.ID)
+	obj, err := root.NewObject(g.ctx, stageFile.ID)
 	if err != nil {
 		return err
 	}
@@ -148,11 +150,24 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 	if cmd.Email == "" {
 		cmd.Email = g.getenv(envVarUserEmail)
 	}
-	commit, err := stage.BuildCommit(cmd.Name, cmd.Email, cmd.Message)
+	stage, err := stageFile.Stage()
 	if err != nil {
 		return fmt.Errorf("stage has errors: %w", err)
 	}
-	if err := obj.Commit(ctx, commit); err != nil {
+	updateCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
+	defer stop()
+	update, err := obj.Update(
+		updateCtx,
+		stage,
+		cmd.Message,
+		newUser(cmd.Name, cmd.Email),
+		ocfl.UpdateWithLogger(g.logger),
+	)
+	if err != nil {
+		if errors.Is(err, context.Canceled) && update != nil {
+			g.logger.Info("received interupt: reverting changes...")
+			return update.Revert(ctx, obj.FS(), obj.Path(), stage.ContentSource)
+		}
 		return fmt.Errorf("creating new object version: %w", err)
 	}
 	if err := os.Remove(cmd.File); err != nil {
@@ -207,7 +222,7 @@ func (cmd *StageDiffCmd) Run(g *globals) error {
 			return err
 		}
 		if obj.Exists() {
-			baseState = obj.Inventory().Version(0).State().PathMap()
+			baseState = obj.Version(0).State().PathMap()
 		}
 	}
 
@@ -286,7 +301,7 @@ func (cmd *StageStatusCmd) Run(g *globals) error {
 	}
 	baseState := ocfl.PathMap{}
 	if obj.Exists() {
-		baseState = obj.Inventory().Version(0).State().PathMap()
+		baseState = obj.Version(0).State().PathMap()
 	}
 	stateDiff, err := diff.Diff(baseState, stageFile.NextState)
 	if err != nil {
@@ -312,4 +327,11 @@ func (cmd *StageStatusCmd) Run(g *globals) error {
 		return errors.New("stage has errors")
 	}
 	return nil
+}
+
+func newUser(name string, email string) ocfl.User {
+	if email != "" && !strings.HasPrefix(`email:`, email) {
+		email = "email:" + email
+	}
+	return ocfl.User{Name: name, Address: email}
 }

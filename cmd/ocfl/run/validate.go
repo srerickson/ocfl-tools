@@ -46,7 +46,7 @@ func (cmd *ValidateCmd) Run(g *globals) error {
 			return err
 		}
 		var badObjs []string
-		for obj, err := range root.Objects(g.ctx) {
+		for obj, err := range root.Objects(g.ctx, ocfl.ObjectSkipSidecarValidation()) {
 			if err != nil {
 				return fmt.Errorf("finding objects in the storage root: %w", err)
 			}

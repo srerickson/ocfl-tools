@@ -1,7 +1,6 @@
 package run
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/srerickson/ocfl-go"
@@ -27,15 +26,11 @@ func (cmd *InfoCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	inv := obj.Inventory()
-	if inv == nil {
-		return errors.New("object has no inventory")
-	}
 	fmt.Fprintln(g.stdout, "object path:", locationString(obj.FS(), obj.Path()))
-	fmt.Fprintln(g.stdout, "id:", inv.ID())
-	fmt.Fprintln(g.stdout, "digest algorithm:", inv.DigestAlgorithm())
-	fmt.Fprintln(g.stdout, "head:", inv.Head())
-	fmt.Fprintln(g.stdout, "OCFL version:", inv.Spec())
-	fmt.Fprintln(g.stdout, "inventory.json", inv.DigestAlgorithm().ID()+":", inv.Digest())
+	fmt.Fprintln(g.stdout, "id:", obj.ID())
+	fmt.Fprintln(g.stdout, "digest algorithm:", obj.DigestAlgorithm())
+	fmt.Fprintln(g.stdout, "head:", obj.Head())
+	fmt.Fprintln(g.stdout, "OCFL version:", obj.Spec())
+	fmt.Fprintln(g.stdout, "inventory.json", obj.DigestAlgorithm().ID()+":", obj.InventoryDigest())
 	return nil
 }

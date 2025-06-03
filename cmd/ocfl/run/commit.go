@@ -1,6 +1,10 @@
 package run
 
-import "github.com/srerickson/ocfl-tools/cmd/ocfl/internal/stage"
+import (
+	"fmt"
+
+	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/stage"
+)
 
 const commitHelp = "Create or update an object using contents of a local directory"
 
@@ -37,9 +41,13 @@ func (cmd *CommitCmd) Run(g *globals) error {
 	if cmd.Email == "" {
 		cmd.Email = g.getenv(envVarUserEmail)
 	}
-	commit, err := changes.BuildCommit(cmd.Name, cmd.Email, cmd.Message)
+	stage, err := changes.Stage()
 	if err != nil {
-		return err
+		return fmt.Errorf("stage has errors: %w", err)
 	}
-	return obj.Commit(ctx, commit)
+	_, err = obj.Update(ctx, stage, cmd.Message, newUser(cmd.Name, cmd.Email))
+	if err != nil {
+		return fmt.Errorf("creating new object version: %w", err)
+	}
+	return nil
 }

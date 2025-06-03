@@ -19,12 +19,8 @@ func (cmd *LogCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	inv := obj.Inventory()
-	if inv == nil {
-		return errors.New("object has no inventory")
-	}
-	for _, vnum := range inv.Head().Lineage() {
-		version := inv.Version(vnum.Num())
+	for _, vnum := range obj.Head().Lineage() {
+		version := obj.Version(vnum.Num())
 		if version == nil {
 			return errors.New("inventory is missing entry for " + vnum.String())
 		}
