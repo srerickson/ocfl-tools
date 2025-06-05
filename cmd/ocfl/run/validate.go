@@ -46,14 +46,16 @@ func (cmd *ValidateCmd) Run(g *globals) error {
 			return err
 		}
 		var badObjs []string
-		for obj, err := range root.Objects(g.ctx, ocfl.ObjectSkipSidecarValidation()) {
+		for decl, err := range root.ObjectDeclarations(g.ctx) {
 			if err != nil {
 				return fmt.Errorf("finding objects in the storage root: %w", err)
 			}
-			g.logger = g.logger.With("object_path", obj.Path())
-			result := ocfl.ValidateObject(g.ctx, obj.FS(), obj.Path(), cmd.validationOptions(g.logger)...)
+			objFS := decl.FS
+			objDir := decl.FullPathDir()
+			g.logger = g.logger.With("object_path", objDir)
+			result := ocfl.ValidateObject(g.ctx, objFS, objDir, cmd.validationOptions(g.logger)...)
 			if result.Err() != nil {
-				badObjs = append(badObjs, obj.Path())
+				badObjs = append(badObjs, objDir)
 			}
 		}
 		if l := len(badObjs); l > 0 {
