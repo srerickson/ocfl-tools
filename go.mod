@@ -1,8 +1,10 @@
 module github.com/srerickson/ocfl-tools
 
-go 1.23.0
+go 1.24.0
 
 require (
+	github.com/Oudwins/tailwind-merge-go v0.2.1
+	github.com/a-h/templ v0.3.894
 	github.com/alecthomas/kong v1.11.0
 	github.com/aws/aws-sdk-go-v2 v1.36.3
 	github.com/aws/aws-sdk-go-v2/config v1.29.14

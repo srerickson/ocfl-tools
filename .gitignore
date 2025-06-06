@@ -1,5 +1,6 @@
 .DS_Store
 .tool-versions
-cmd/ocfl/ocfl
-dist/
-ocfl
+dist
+tmp
+*_templ.go
+./ocfl
