@@ -3,7 +3,7 @@ package run
 import (
 	"net/http"
 
-	"github.com/srerickson/ocfl-tools/cmd/ocfl/run/server"
+	"github.com/srerickson/ocfl-tools/internal/server"
 )
 
 var serverHelp = "Start http server for view OCFL objects in the storage root"

@@ -12,6 +12,9 @@ import (
 	"strconv"
 
 	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-tools/internal/server/assets"
+	"github.com/srerickson/ocfl-tools/internal/server/modal"
+	"github.com/srerickson/ocfl-tools/internal/server/ui/pages"
 )
 
 // addRoutes sets up all routes for the mux
@@ -23,7 +26,7 @@ func addRoutes(
 	tmpl *Templates,
 
 ) {
-	mux.Handle("/static/", http.FileServerFS(staticFS))
+	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServerFS(assets.FS)))
 	mux.HandleFunc("GET /{$}", handleIndex(index, tmpl.Index))
 	mux.HandleFunc("GET /object/{id...}", handleObject(logger, root, index, tmpl.Object))
 	mux.HandleFunc("GET /download/{id}/{name}", handleDownload(logger, root, index))
@@ -110,14 +113,13 @@ func handleObject(logger *slog.Logger, root *ocfl.Root, index RootIndex, view *t
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		templateData, err := NewObject(ctx, obj, version, statePath)
+		templateData, err := modal.NewObject(ctx, obj, version, statePath)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if err := view.ExecuteTemplate(w, "base", &templateData); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		if err := pages.Object(templateData).Render(ctx, w); err != nil {
+			logger.Error(err.Error())
 		}
 	}
 }

@@ -1,4 +1,4 @@
-package server
+package modal
 
 import (
 	"context"
@@ -16,6 +16,17 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"golang.org/x/sync/errgroup"
 )
+
+type Object struct {
+	ID              string
+	DigestAlgorithm string
+	Num             string
+	Message         string
+	User            *ocfl.User
+	Created         time.Time
+	// Path            string
+	FileTree *FileTree // tree for entire root
+}
 
 func NewObject(ctx context.Context, base *ocfl.Object, v string, logicalPath string) (*Object, error) {
 	var vnum ocfl.VNum
@@ -60,17 +71,6 @@ func NewObject(ctx context.Context, base *ocfl.Object, v string, logicalPath str
 	// 	obj.Versions[i-1] = objVersion
 	// }
 	return obj, nil
-}
-
-type Object struct {
-	ID              string
-	DigestAlgorithm string
-	Num             string
-	Message         string
-	User            *ocfl.User
-	Created         time.Time
-	// Path            string
-	FileTree *FileTree // tree for entire root
 }
 
 type FileTree struct {

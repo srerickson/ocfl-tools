@@ -1,0 +1,51 @@
+package pages
+
+import (
+	"github.com/srerickson/ocfl-tools/internal/server/modal"
+	"github.com/srerickson/ocfl-tools/internal/server/ui/components/icon"
+	"github.com/srerickson/ocfl-tools/internal/server/ui/components/table"
+	"github.com/srerickson/ocfl-tools/internal/server/ui/layouts"
+	"github.com/srerickson/ocfl-tools/internal/server/ui/utils"
+)
+
+templ Object(obj *modal.Object) {
+	@layouts.BaseLayout() {
+		<h3 class="text-lg py-8">{ obj.ID }</h3>
+		@table.Table() {
+			@table.Caption()
+			@table.Header() {
+				@table.Row() {
+					@table.Head() {
+						File
+					}
+					@table.Head() {
+						Size
+					}
+				}
+			}
+			@table.Body() {
+				for path, tree := range obj.FileTree.Children() {
+					@table.Row() {
+						@table.Cell() {
+							<div class="flex flex-nowrap gap-2">
+								<div>
+									if tree.IsDir() {
+										@icon.FolderOpen(icon.Props{Color: "gray"})
+									} else {
+										@icon.File(icon.Props{Color: "gray"})
+									}
+								</div>
+								<div>{ path }</div>
+							</div>
+						}
+						@table.Cell() {
+							if tree.File != nil && tree.File.Info != nil {
+								{ utils.FileSize(tree.File.Info.Size()) }
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

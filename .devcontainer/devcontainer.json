@@ -9,7 +9,8 @@
   	"features": {
     	"ghcr.io/devcontainers/features/node:1": {
       		"version": "lts"
-   	 	}
+   	 	},
+		"ghcr.io/r3dpoint/devcontainer-features/tailwindcss-standalone-cli:1": {}
   	},
   	"postCreateCommand": "npm install -g @anthropic-ai/claude-code"
 }
