@@ -17,8 +17,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/charmbracelet/log"
 	"github.com/srerickson/ocfl-go"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
@@ -34,12 +32,6 @@ const (
 
 	// if "true", enable path-style addressing for s3
 	envVarS3PathStyle = "OCFL_S3_PATHSTYLE"
-
-	// if "true", S3 request integrity will used MD5 instead of CRC32 (the
-	// default). This is sometimes needed to support non-AWS S3 implementations
-	// like OpenStack's Object Storage. See:
-	// https://github.com/aws/aws-sdk-go-v2/discussions/2960
-	envVarS3MD5Checksums = "OCFL_S3_MD5_CHECKSUMS"
 
 	// keys that can be used in tests
 	envVarAWSKey      = "AWS_ACCESS_KEY_ID"
@@ -108,7 +100,6 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 var cli struct {
 	globals
-
 	Commit   CommitCmd   `cmd:"" help:"${commit_help}"`
 	Diff     DiffCmd     `cmd:"" help:"${diff_help}"`
 	Delete   DeleteCmd   `cmd:"" help:"${delete_help}"`
@@ -147,11 +138,7 @@ func (g *globals) parseLocation(loc string) (ocflfs.FS, string, error) {
 	switch locUrl.Scheme {
 	case "s3":
 		var awsOpts []func(*config.LoadOptions) error
-		s3Opts := []func(*s3.Options){
-			// Prevent "Response has no supported checksum" log messages
-			// https://github.com/aws/aws-sdk-go-v2/issues/2999
-			func(o *s3.Options) { o.DisableLogOutputChecksumValidationSkipped = true },
-		}
+		var s3Opts []func(*s3.Options)
 		bucket := locUrl.Host
 		prefix := strings.TrimPrefix(locUrl.Path, "/")
 		// values passed through getenv are mostly for testing.
@@ -174,21 +161,6 @@ func (g *globals) parseLocation(loc string) (ocflfs.FS, string, error) {
 		if strings.EqualFold(g.getenv(envVarS3PathStyle), "true") {
 			s3Opts = append(s3Opts, func(o *s3.Options) {
 				o.UsePathStyle = true
-			})
-		}
-		if strings.EqualFold(g.getenv(envVarS3MD5Checksums), "true") {
-			// Reinstating MD5 for checksum-required operations
-			// https://github.com/aws/aws-sdk-go-v2/discussions/2960
-			awsOpts = append(awsOpts, config.WithResponseChecksumValidation(aws.ResponseChecksumValidationWhenRequired))
-			awsOpts = append(awsOpts, config.WithRequestChecksumCalculation(aws.RequestChecksumCalculationWhenRequired))
-			s3Opts = append(s3Opts, func(o *s3.Options) {
-				o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
-					stack.Initialize.Remove("AWSChecksum:SetupInputContext")
-					stack.Build.Remove("AWSChecksum:RequestMetricsTracking")
-					stack.Finalize.Remove("AWSChecksum:ComputeInputPayloadChecksum")
-					stack.Finalize.Remove("addInputChecksumTrailer")
-					return smithyhttp.AddContentChecksumMiddleware(stack)
-				})
 			})
 		}
 		cfg, err := config.LoadDefaultConfig(g.ctx, awsOpts...)
