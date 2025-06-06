@@ -13,6 +13,7 @@ require (
 	github.com/charmbracelet/log v0.4.2
 	github.com/srerickson/ocfl-go v0.9.1
 	golang.org/x/exp v0.0.0-20250531010427-b6e5de432a8b
+	golang.org/x/sync v0.15.0
 )
 
 require (
@@ -46,6 +47,5 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/crypto v0.38.0 // indirect
-	golang.org/x/sync v0.15.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
 )
