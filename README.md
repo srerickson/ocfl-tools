@@ -111,12 +111,8 @@ export AWS_ACCESS_KEY_ID="..."
 export AWS_SECRET_ACCESS_KEY="..."
 ```
 
-There are a few additional S3 configuration options:
+Additional S3 configuration options:
 - `OCFL_S3_PATHSTYLE=true`: enables [path-style S3 requests](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html#path-style-access)
-- `OCFL_S3_MD5_CHECKSUMS=true`: use MD5 (instead of CRC32) for S3 requests that
-  require checksums. This is sometimes needed to support non-AWS S3
-  implementations [(see
-  discussion here)](https://github.com/aws/aws-sdk-go-v2/discussions/2960).
 
 #### Read objects using HTTP
 
