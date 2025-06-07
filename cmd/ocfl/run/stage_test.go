@@ -10,7 +10,7 @@ import (
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/testutil"
 )
 
-func TestStage(t *testing.T) {
+func TestStage_New(t *testing.T) {
 	tmpDir, fixtures := testutil.TempDirTestData(t, `testdata/content-fixture`)
 	contentFixture := fixtures[0]
 	rootPath := filepath.Join(tmpDir, "ocfl")
@@ -28,7 +28,7 @@ func TestStage(t *testing.T) {
 		be.NilErr(t, err)
 	})
 	// v1 stage
-	cmd := []string{"stage", "new", "--file", stagePath, "--ocflv", "1.0", "--alg", "sha256", objID}
+	cmd := []string{"stage", "new", "--file", stagePath, "--ocflv", "1.0", "--alg", "sha256", "--id", objID}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 		be.NilErr(t, err)
 		be.In(t, stagePath, stderr)
@@ -64,7 +64,7 @@ func TestStage(t *testing.T) {
 	}
 
 	// v2 stage
-	cmd = []string{"stage", "new", "--file", stagePath, objID}
+	cmd = []string{"stage", "new", "--file", stagePath, "--id", objID}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 		be.NilErr(t, err)
 		be.In(t, stagePath, stderr)
@@ -90,7 +90,7 @@ func TestStage(t *testing.T) {
 	})
 }
 
-func TestStageRm(t *testing.T) {
+func TestStage_Rm(t *testing.T) {
 	tmpDir, fixtures := testutil.TempDirTestData(t,
 		`testdata/content-fixture`,
 		`testdata/store-fixtures/1.0/good-stores/reg-extension-dir-root`,
@@ -101,7 +101,7 @@ func TestStageRm(t *testing.T) {
 	contentFile := filepath.Join(contentFixture, "hello.csv")
 	env := map[string]string{"OCFL_ROOT": ocflPath}
 	objID := "ark:123/abc"
-	cmd := []string{"stage", "new", "--file", stagePath, "--ocflv", "1.0", "--alg", "sha256", objID}
+	cmd := []string{"stage", "new", "--file", stagePath, "--ocflv", "1.0", "--alg", "sha256", "--id", objID}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 		be.NilErr(t, err)
 		be.In(t, stagePath, stderr)
@@ -141,7 +141,7 @@ func TestStageRm(t *testing.T) {
 	})
 }
 
-func TestStageCommit(t *testing.T) {
+func TestStage_Commit(t *testing.T) {
 	tmpDir, fixtures := testutil.TempDirTestData(t,
 		`testdata/content-fixture`,
 	)
@@ -161,7 +161,7 @@ func TestStageCommit(t *testing.T) {
 		be.NilErr(t, err)
 	})
 	// v1 stage
-	cmd := []string{"stage", "new", "--file", stagePath, "--ocflv", "1.0", "--alg", "sha512", objID}
+	cmd := []string{"stage", "new", "--file", stagePath, "--ocflv", "1.0", "--alg", "sha512", "--id", objID}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 		be.NilErr(t, err)
 		be.In(t, stagePath, stderr)
@@ -209,7 +209,7 @@ func TestStageCommit(t *testing.T) {
 	})
 }
 
-func TestStageDiff(t *testing.T) {
+func TestStage_Diff(t *testing.T) {
 	_, fixtures := testutil.TempDirTestData(t,
 		`testdata/content-fixture`,
 		`testdata/store-fixtures/1.0/good-stores/reg-extension-dir-root`,
@@ -222,7 +222,7 @@ func TestStageDiff(t *testing.T) {
 		stagePath := filepath.Join(stageDir, "my-stage.json")
 		existingID := "ark:123/abc"
 		// create the stage file
-		cmd := []string{"stage", "new", "--file", stagePath, existingID}
+		cmd := []string{"stage", "new", "--file", stagePath, "--id", existingID}
 		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 			be.NilErr(t, err)
 			be.In(t, stagePath, stderr)
@@ -261,7 +261,7 @@ func TestStageDiff(t *testing.T) {
 		stagePath := filepath.Join(stageDir, "my-stage.json")
 		newID := "ark:xyz/678"
 		// create the stage file
-		cmd := []string{"stage", "new", "--file", stagePath, newID}
+		cmd := []string{"stage", "new", "--file", stagePath, "--id", newID}
 		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 			be.NilErr(t, err)
 			be.In(t, stagePath, stderr)
@@ -297,7 +297,7 @@ func TestStageDiff(t *testing.T) {
 	})
 }
 
-func TestStageStatus(t *testing.T) {
+func TestStage_Status(t *testing.T) {
 	_, fixtures := testutil.TempDirTestData(t,
 		`testdata/content-fixture`,
 		`testdata/store-fixtures/1.0/good-stores/reg-extension-dir-root`,
@@ -308,7 +308,7 @@ func TestStageStatus(t *testing.T) {
 		newID := "ark:xyz/678"
 		stageDir := t.TempDir()
 		stagePath := filepath.Join(stageDir, "my-stage.json")
-		cmd := []string{"stage", "new", "--file", stagePath, newID}
+		cmd := []string{"stage", "new", "--file", stagePath, "--id", newID}
 		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 			be.NilErr(t, err)
 			be.In(t, stagePath, stderr)
@@ -335,5 +335,17 @@ func TestStageStatus(t *testing.T) {
 			be.Nonzero(t, err)
 			be.In(t, "file is missing", stderr)
 		})
+	})
+}
+
+func TestStage_NewRequiresID(t *testing.T) {
+	tmpDir := t.TempDir()
+	stagePath := filepath.Join(tmpDir, "my-stage.json")
+	env := map[string]string{"OCFL_ROOT": tmpDir}
+	
+	// stage new without --id flag should return an error
+	cmd := []string{"stage", "new", "--file", stagePath}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.Nonzero(t, err)
 	})
 }
