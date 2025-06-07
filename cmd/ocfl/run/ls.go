@@ -2,6 +2,7 @@ package run
 
 import (
 	"fmt"
+	"io/fs"
 
 	"github.com/srerickson/ocfl-go"
 )
@@ -13,6 +14,7 @@ type LsCmd struct {
 	ObjPath     string `name:"object" help:"full path to object root. If set, --root and --id are ignored."`
 	Version     int    `name:"version" short:"v" default:"0" help:"The object version number (unpadded) to list contents from. The default (0) lists the latest version."`
 	WithDigests bool   `name:"digests" short:"d" help:"Show digests when listing contents of an object version."`
+	WithSize    bool   `name:"size" short:"s"`
 }
 
 func (cmd *LsCmd) Run(g *globals) error {
@@ -34,17 +36,32 @@ func (cmd *LsCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	ver := obj.Version(cmd.Version)
-	if ver == nil {
+	vfs, err := obj.VersionFS(g.ctx, cmd.Version)
+	if err != nil {
 		err := fmt.Errorf("version %d not found in object %q", cmd.Version, cmd.ID)
 		return err
 	}
-	for path, digest := range ver.State().PathMap().SortedPaths() {
-		if cmd.WithDigests {
-			fmt.Fprintln(g.stdout, digest, path)
-			continue
+	versionDigests := obj.Version(cmd.Version).State().PathMap()
+	err = fs.WalkDir(vfs, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
 		}
-		fmt.Fprintln(g.stdout, path)
+		toPrint := []any{path}
+		if cmd.WithSize {
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			toPrint = append(toPrint, info.Size())
+		}
+		if cmd.WithDigests {
+			toPrint = append(toPrint, versionDigests[path])
+		}
+		fmt.Fprintln(g.stdout, toPrint...)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("while traversing version files: %w", err)
 	}
 	return nil
 }
