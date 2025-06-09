@@ -6,6 +6,7 @@ import (
 	"github.com/srerickson/ocfl-tools/internal/server/ui/components/table"
 	"github.com/srerickson/ocfl-tools/internal/server/ui/layouts"
 	"github.com/srerickson/ocfl-tools/internal/server/utils"
+	"path"
 )
 
 templ Object(obj *model.Object) {
@@ -24,23 +25,55 @@ templ Object(obj *model.Object) {
 				}
 			}
 			@table.Body() {
-				for path, tree := range obj.FileTree.Children() {
+				if obj.FileTree.ActivePath != "." {
 					@table.Row() {
 						@table.Cell() {
 							<div class="flex flex-nowrap gap-2">
 								<div>
-									if tree.IsDir() {
-										@icon.FolderOpen(icon.Props{Color: "gray"})
-									} else {
-										@icon.File(icon.Props{Color: "gray"})
-									}
+									@icon.FolderOpen(icon.Props{Color: "gray"})
 								</div>
-								<div>{ path }</div>
+								<div>
+									<a href={ utils.ObjectPath(obj.ID, path.Dir(obj.FileTree.ActivePath)) } 
+										class="text-blue-600 hover:text-blue-800 underline">..</a>
+								</div>
 							</div>
 						}
-						@table.Cell() {
-							if tree.File != nil && tree.File.Info != nil {
-								{ utils.FileSize(tree.File.Info.Size()) }
+						@table.Cell(){
+
+						}
+					}
+					
+				}
+				if obj.FileTree.Active() != nil {
+					for child, tree := range obj.FileTree.Active().Children() {
+						@table.Row() {
+							@table.Cell() {
+								<div class="flex flex-nowrap gap-2">
+									if tree.IsDir() {
+										<div>
+											@icon.FolderOpen(icon.Props{Color: "gray"})
+										</div>
+										<div>
+											<a href={ utils.ObjectPath(obj.ID, tree.Path()) } class="text-blue-600 hover:text-blue-800 underline">
+												{ child }
+											</a>
+										</div>
+									} else {
+										<div>
+											@icon.File(icon.Props{Color: "gray"})
+										</div>
+										<div>
+											<a href={ utils.DownloadPath(obj.ID, tree.File.Path) } class="text-blue-600 hover:text-blue-800 underline">
+												{ child }
+											</a>
+										</div>
+									}
+								</div>
+							}
+							@table.Cell() {
+								if tree.File != nil && tree.File.Info != nil {
+									{ utils.FileSize(tree.File.Info.Size()) }
+								}
 							}
 						}
 					}

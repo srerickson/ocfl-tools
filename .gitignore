@@ -5,4 +5,4 @@ ocfl
 dist
 tmp
 *_templ.go
-internal/server/assets/css/output.css
+output.css

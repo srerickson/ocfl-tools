@@ -28,49 +28,32 @@ type Object struct {
 	FileTree *FileTree // tree for entire root
 }
 
-func NewObject(ctx context.Context, base *ocfl.Object, v string, logicalPath string) (*Object, error) {
+func NewObject(ctx context.Context, obj *ocfl.Object, v string, logicalPath string) (*Object, error) {
 	var vnum ocfl.VNum
 	ocfl.ParseVNum(v, &vnum)
-	ver := base.Version(vnum.Num())
+	ver := obj.Version(vnum.Num())
 	if ver == nil {
 		return nil, errors.New("object version doesn't exist")
 	}
-	rootTree := NewFileTree(base, vnum.Num())
+	rootTree := NewFileTree(obj, vnum.Num())
 	if fs.ValidPath(logicalPath) {
 		rootTree.ActivePath = logicalPath
+	}
+	if rootTree.ActivePath == "" {
+		rootTree.ActivePath = "."
 	}
 	if err := rootTree.Active().statFiles(ctx, 5); err != nil {
 		return nil, err
 	}
-	obj := &Object{
-		ID:              base.ID(),
-		DigestAlgorithm: base.DigestAlgorithm().ID(),
+	return &Object{
+		ID:              obj.ID(),
+		DigestAlgorithm: obj.DigestAlgorithm().ID(),
 		Num:             vnum.String(),
 		Message:         ver.Message(),
 		Created:         ver.Created(),
 		User:            ver.User(),
 		FileTree:        rootTree,
-	}
-	// slices.Reverse(vers)
-	// for i, vnum := range vers {
-	// 	verFS, err := base.OpenVersion(ctx, vnum.Num())
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	objVersion := ObjectVersion{
-	// 		Num:     vnum.String(),
-	// 		Message: verFS.Message(),
-	// 		Created: verFS.Created(),
-	// 		User:    verFS.User(),
-	// 		Files:   fileTree(ctx, base, vnum.Num()),
-	// 	}
-	// 	if i == 0 {
-	// 		obj.Head = objVersion
-	// 		continue
-	// 	}
-	// 	obj.Versions[i-1] = objVersion
-	// }
-	return obj, nil
+	}, nil
 }
 
 type FileTree struct {
@@ -107,7 +90,6 @@ func (ft *FileTree) Children() iter.Seq2[string, *FileTree] {
 }
 
 type FileTreeNode struct {
-	//ObjectID string          // Object ID
 	File     *digest.FileRef // file contents
 	Name     string
 	Parent   *FileTreeNode
@@ -159,12 +141,6 @@ func (n *FileTreeNode) statFiles(ctx context.Context, conc int) error {
 			return f.File.Stat(ctx)
 		})
 	}
-	// vistitFileTree(n, func(ft *FileTree) error {
-	// 	if ft.File == nil {
-	// 		return nil
-	// 	}
-	// 	return ft.File.Stat(ctx)
-	// })
 	return grp.Wait()
 }
 
@@ -233,9 +209,7 @@ func NewFileTree(obj *ocfl.Object, num int) *FileTree {
 	if version == nil || manifest == nil {
 		return nil
 	}
-	root := &FileTreeNode{
-		// ObjectID: obj.ID(),
-	}
+	root := &FileTreeNode{}
 	statePathMap := version.State().PathMap()
 	fileRefs := map[string]*digest.FileRef{}
 	for logicalPath, dig := range statePathMap.SortedPaths() {
