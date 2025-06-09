@@ -5,15 +5,15 @@ import (
 	"net/http"
 
 	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-tools/internal/server/model"
 )
 
 func NewServer(
 	logger *slog.Logger,
 	root *ocfl.Root,
-	index RootIndex,
-	tmpls *Templates,
+	index model.RootIndex,
 ) http.Handler {
 	mux := http.NewServeMux()
-	addRoutes(mux, logger, root, index, tmpls)
+	addRoutes(mux, logger, root, index)
 	return mux
 }

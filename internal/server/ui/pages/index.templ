@@ -1,0 +1,47 @@
+package pages
+
+import (
+	"github.com/srerickson/ocfl-tools/internal/server/model"
+	"github.com/srerickson/ocfl-tools/internal/server/ui/components/table"
+	"github.com/srerickson/ocfl-tools/internal/server/ui/layouts"
+	"iter"
+	"github.com/srerickson/ocfl-tools/internal/server/utils"
+)
+
+templ Index(objects iter.Seq[*model.IndexObject]) {
+	@layouts.BaseLayout() {
+		<h1 class="text-2xl font-bold py-8">Listing all objects</h1>
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() {
+						Object ID
+					}
+					@table.Head() {
+						Latest Version
+					}
+					@table.Head() {
+						Version Created
+					}
+				}
+			}
+			@table.Body() {
+				for obj := range objects {
+					@table.Row() {
+						@table.Cell() {
+							<a href={ utils.ObjectPath(obj.ID,"") } class="text-blue-600 hover:text-blue-800 underline">
+								{ obj.ID }
+							</a>
+						}
+						@table.Cell() {
+							{ obj.Head.String() }
+						}
+						@table.Cell() {
+							{ utils.FormatDate(obj.HeadCreated) }
+						}
+					}
+				}
+			}
+		}
+	}
+}

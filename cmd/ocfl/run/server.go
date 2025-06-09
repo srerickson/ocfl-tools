@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/srerickson/ocfl-tools/internal/server"
+	"github.com/srerickson/ocfl-tools/internal/server/model"
 )
 
 var serverHelp = "Start http server for view OCFL objects in the storage root"
@@ -18,14 +19,10 @@ func (cmd *ServerCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	index := &server.MapRootIndex{}
+	index := &model.MapRootIndex{}
 	if err := index.ReIndex(root.Objects(ctx)); err != nil {
 		return err
 	}
-	templates, err := server.ReadTemplates()
-	if err != nil {
-		return err
-	}
-	srv := server.NewServer(g.logger, root, index, templates)
+	srv := server.NewServer(g.logger, root, index)
 	return http.ListenAndServe(cmd.ListenAddress, srv)
 }

@@ -2,10 +2,8 @@ package server
 
 import (
 	"errors"
-	"html/template"
 	"io"
 	"io/fs"
-	"iter"
 	"log/slog"
 	"net/http"
 	"path"
@@ -13,7 +11,7 @@ import (
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-tools/internal/server/assets"
-	"github.com/srerickson/ocfl-tools/internal/server/modal"
+	"github.com/srerickson/ocfl-tools/internal/server/model"
 	"github.com/srerickson/ocfl-tools/internal/server/ui/pages"
 )
 
@@ -22,17 +20,15 @@ func addRoutes(
 	mux *http.ServeMux,
 	logger *slog.Logger,
 	root *ocfl.Root,
-	index RootIndex,
-	tmpl *Templates,
-
+	index model.RootIndex,
 ) {
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServerFS(assets.FS)))
-	mux.HandleFunc("GET /{$}", handleIndex(index, tmpl.Index))
-	mux.HandleFunc("GET /object/{id...}", handleObject(logger, root, index, tmpl.Object))
+	mux.HandleFunc("GET /{$}", handleIndex(logger, index))
+	mux.HandleFunc("GET /object/{id...}", handleObject(logger, root, index))
 	mux.HandleFunc("GET /download/{id}/{name}", handleDownload(logger, root, index))
 }
 
-func handleDownload(logger *slog.Logger, root *ocfl.Root, index RootIndex) http.HandlerFunc {
+func handleDownload(logger *slog.Logger, root *ocfl.Root, index model.RootIndex) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		id := r.PathValue("id")
@@ -72,20 +68,16 @@ func handleDownload(logger *slog.Logger, root *ocfl.Root, index RootIndex) http.
 	}
 }
 
-func handleIndex(index RootIndex, view *template.Template) http.HandlerFunc {
+func handleIndex(logger *slog.Logger, index model.RootIndex) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		type templateData struct {
-			Objects iter.Seq[*IndexObject]
-		}
-		data := templateData{Objects: index.Objects()}
-		if err := view.ExecuteTemplate(w, "base", data); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		ctx := r.Context()
+		if err := pages.Index(index.Objects()).Render(ctx, w); err != nil {
+			logger.Error(err.Error())
 		}
 	}
 }
 
-func handleObject(logger *slog.Logger, root *ocfl.Root, index RootIndex, view *template.Template) http.HandlerFunc {
+func handleObject(logger *slog.Logger, root *ocfl.Root, index model.RootIndex) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		id := r.PathValue("id")
@@ -113,7 +105,7 @@ func handleObject(logger *slog.Logger, root *ocfl.Root, index RootIndex, view *t
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		templateData, err := modal.NewObject(ctx, obj, version, statePath)
+		templateData, err := model.NewObject(ctx, obj, version, statePath)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

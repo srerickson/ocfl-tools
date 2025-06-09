@@ -1,4 +1,4 @@
-package server
+package model
 
 import (
 	"iter"
@@ -9,6 +9,7 @@ import (
 	"github.com/srerickson/ocfl-go"
 )
 
+// Root index types
 type RootIndex interface {
 	Objects() iter.Seq[*IndexObject]
 	Get(id string) *IndexObject
