@@ -40,9 +40,8 @@ type stageCmdBase struct {
 // stage new
 type NewStageCmd struct {
 	stageCmdBase
-	Spec string `name:"ocflv" default:"1.1" help:"OCFL spec for the new object version"`
-	Alg  string `name:"alg" default:"sha512" help:"Digest Algorithm used to digest content. Ignored for existing objects."`
-	ID   string `name:"id" arg:"" help:"object id for the new stage"`
+	Alg string `name:"alg" default:"sha512" help:"Digest Algorithm used to digest content. Ignored for existing objects."`
+	ID  string `name:"id" short:"i" required:"" help:"object id for the new stage"`
 }
 
 func (cmd *NewStageCmd) Run(g *globals) error {

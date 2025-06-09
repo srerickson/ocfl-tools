@@ -56,9 +56,7 @@ type StageFile struct {
 }
 
 // NewStageFile creates a new stage for the object. The newAlg argument can be used
-// to set non-standard digest algorithm if the object does not exist. newID is
-// for the id on an object if it doesn't exist (The ocfl-go Object api should
-// really support this, but not yet: https://github.com/srerickson/ocfl-go/issues/114)
+// to set non-standard digest algorithm if the object does not exist.
 func NewStageFile(obj *ocfl.Object, newAlg string) (*StageFile, error) {
 	objID := obj.ID()
 	if objID == "" {
