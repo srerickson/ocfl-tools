@@ -9,8 +9,8 @@ import (
 templ Object(obj *model.Object) {
 	@layouts.BaseLayout() {
 		<div class="p-2">
-			<div class="text-xl my-2">{obj.ID}</div>
-		</div>		
-		@files.FileList(obj.Files)
+			<div class="text-xl my-2">{ obj.ID }</div>
+		</div>
+		@files.List(obj.Files)
 	}
 }

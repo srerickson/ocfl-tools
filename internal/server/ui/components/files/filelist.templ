@@ -4,10 +4,11 @@ import (
 	"github.com/srerickson/ocfl-tools/internal/server/model"
 	"github.com/srerickson/ocfl-tools/internal/server/ui/components/icon"
 	"github.com/srerickson/ocfl-tools/internal/server/ui/components/table"
+	"github.com/srerickson/ocfl-tools/internal/server/ui/components/tooltip"
 	"github.com/srerickson/ocfl-tools/internal/server/utils"
 )
 
-templ FileList(files *model.FileTree) {
+templ List(files *model.FileTree) {
 	@table.Table() {
 		@table.Caption()
 		@table.Header() {
@@ -17,6 +18,9 @@ templ FileList(files *model.FileTree) {
 				}
 				@table.Head() {
 					Size
+				}
+				@table.Head() {
+					Digest
 				}
 			}
 		}
@@ -29,49 +33,91 @@ templ FileList(files *model.FileTree) {
 								@icon.FolderOpen(icon.Props{Color: "gray"})
 							</div>
 							<div>
-								<a href={ utils.ObjectPath(files.ObjectID, files.Version(), files.Parent.Path()) } 
-									class="text-blue-600 hover:text-blue-800">..</a>
+								<a
+									href={ utils.ObjectPath(files.ObjectID, files.Version(), files.Parent.Path()) }
+									class="text-blue-600 hover:text-blue-800"
+								>..</a>
 							</div>
 						</div>
 					}
-					@table.Cell(){
-
+					@table.Cell()
+					// size
+					@table.Cell()
+					// details
+				}
+			}
+			for tree := range files.Children() {
+				@table.Row() {
+					@table.Cell() {
+						@fileListItem(tree)
+					}
+					@table.Cell() {
+						@fileSize(tree)
+					}
+					@table.Cell() {
+						@fileDigest(tree)
 					}
 				}
 			}
-			for child, tree := range files.Children() {
-				@table.Row() {
-					@table.Cell() {
-						<div class="flex flex-nowrap gap-2">
-							if tree.IsDir() {
-								<div>
-									@icon.FolderOpen(icon.Props{Color: "gray"})
-								</div>
-								<div>
-									<a href={ utils.ObjectPath(files.ObjectID, files.Version(), tree.Path()) } class="text-blue-600 hover:text-blue-800">
-										{ child }
-									</a>
-								</div>
-							} else {
-								<div>
-									@icon.File(icon.Props{Color: "gray"})
-								</div>
-								<div>
-									<a href={ utils.DownloadPath(files.ObjectID, tree.File.Path) } 
-									   class="text-blue-600 hover:text-blue-800"
-									   download={ tree.Name }>
-										{ child }
-									</a>
-								</div>
-							}
-						</div>
-					}
-					@table.Cell() {
-						if tree.File != nil && tree.File.Info != nil {
-							{ utils.FileSize(tree.File.Info.Size()) }
-						}
-					}
-				}
+		}
+	}
+}
+
+templ fileListItem(tree *model.FileTree) {
+	<div class="flex flex-nowrap gap-2">
+		if tree.IsDir() {
+			<div>
+				@icon.FolderOpen(icon.Props{Color: "gray"})
+			</div>
+			<div>
+				<a href={ utils.ObjectPath(tree.ObjectID, tree.Version(), tree.Path()) } class="text-blue-600 hover:text-blue-800">
+					{ tree.Name }
+				</a>
+			</div>
+		} else {
+			<div>
+				@icon.File(icon.Props{Color: "gray"})
+			</div>
+			<div>
+				<a
+					href={ utils.DownloadPath(tree.ObjectID, tree.File.Path) }
+					class="text-blue-600 hover:text-blue-800"
+					download={ tree.Name }
+				>
+					{ tree.Name }
+				</a>
+			</div>
+		}
+	</div>
+}
+
+templ fileSize(node *model.FileTree) {
+	if node.File != nil && node.File.Info != nil {
+		{ utils.FileSize(node.File.Info.Size()) }
+	}
+}
+
+templ fileDigest(node *model.FileTree) {
+	if node.File != nil && node.File.Digests != nil {
+		{{
+			alg := node.File.Algorithm.ID()
+			digest := node.File.Digests[alg]
+		}}
+		@tooltip.Tooltip() {
+			@tooltip.Trigger(tooltip.TriggerProps{
+				For: alg + node.Name,
+			}) {
+				<div class="p-1 font-mono text-xs">{ utils.ShortDigest(digest) } </div>
+			}
+			@tooltip.Content(tooltip.ContentProps{
+				ID:            alg + node.Name,
+				Position:      tooltip.PositionTop,
+				HoverDelay:    500,
+				HoverOutDelay: 100,
+			}) {
+				<span class="font-mono text-xs">
+					{ alg }:{ digest }
+				</span>
 			}
 		}
 	}

@@ -29,12 +29,12 @@ func NewObject(ctx context.Context, obj *ocfl.Object, v string, logicalPath stri
 	tree := NewFileTree(obj, vnum.Num())
 	if logicalPath != "" {
 		var err error
-		tree, err = tree.SubTree(logicalPath)
+		tree, err = tree.Sub(logicalPath)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if err := tree.FileTreeNode.statFiles(ctx, 5); err != nil {
+	if err := tree.statFiles(ctx, 5); err != nil {
 		return nil, err
 	}
 	return &Object{

@@ -1,6 +1,6 @@
 {
   "componentsDir": "internal/server/ui/components",
-  "utilsDir": "internal/server/ui/utils",
+  "utilsDir": "internal/server/utils",
   "moduleName": "github.com/srerickson/ocfl-tools",
   "jsDir": "internal/server/assets/js"
 }

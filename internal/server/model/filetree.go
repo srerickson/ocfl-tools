@@ -15,10 +15,12 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// FileTree represents the logical state of an OCFL object as a hiearchical
+// tree.
 type FileTree struct {
-	*FileTreeNode // root
-	ObjectID      string
-	VNum          ocfl.VNum
+	*FileTreeNode
+	ObjectID string
+	VNum     ocfl.VNum
 }
 
 func NewFileTree(obj *ocfl.Object, vnum int) *FileTree {
@@ -58,7 +60,9 @@ func NewFileTree(obj *ocfl.Object, vnum int) *FileTree {
 	}
 }
 
-func (ft FileTree) SubTree(logicalPath string) (*FileTree, error) {
+// Sub returns a subtree of ft for the logicalPath. If an error is returned, it
+// is an fs.PathError.
+func (ft FileTree) Sub(logicalPath string) (*FileTree, error) {
 	if !fs.ValidPath(logicalPath) {
 		return nil, &fs.PathError{
 			Path: logicalPath,
@@ -81,15 +85,15 @@ func (ft FileTree) SubTree(logicalPath string) (*FileTree, error) {
 	}, nil
 }
 
-func (ft *FileTree) Children() iter.Seq2[string, *FileTree] {
-	return func(yield func(string, *FileTree) bool) {
-		for name, node := range ft.FileTreeNode.Children() {
+func (ft *FileTree) Children() iter.Seq[*FileTree] {
+	return func(yield func(*FileTree) bool) {
+		for node := range ft.FileTreeNode.Children() {
 			subtree := &FileTree{
 				FileTreeNode: node,
 				ObjectID:     ft.ObjectID,
 				VNum:         ft.VNum,
 			}
-			if !yield(name, subtree) {
+			if !yield(subtree) {
 				return
 			}
 		}
@@ -145,7 +149,7 @@ func (n *FileTreeNode) get(name string) *FileTreeNode {
 func (n *FileTreeNode) statFiles(ctx context.Context, conc int) error {
 	grp, ctx := errgroup.WithContext(ctx)
 	grp.SetLimit(conc)
-	for _, f := range n.Files() {
+	for f := range n.Files() {
 		grp.Go(func() error {
 			return f.File.Stat(ctx)
 		})
@@ -154,15 +158,15 @@ func (n *FileTreeNode) statFiles(ctx context.Context, conc int) error {
 }
 
 // Iterate over children: first all directories, then all files.
-func (n *FileTreeNode) Children() iter.Seq2[string, *FileTreeNode] {
-	return func(yield func(string, *FileTreeNode) bool) {
-		for name, dir := range n.Dirs() {
-			if !yield(name, dir) {
+func (n *FileTreeNode) Children() iter.Seq[*FileTreeNode] {
+	return func(yield func(*FileTreeNode) bool) {
+		for dir := range n.Dirs() {
+			if !yield(dir) {
 				return
 			}
 		}
-		for name, dir := range n.Files() {
-			if !yield(name, dir) {
+		for file := range n.Files() {
+			if !yield(file) {
 				return
 			}
 		}
@@ -172,8 +176,8 @@ func (n *FileTreeNode) Children() iter.Seq2[string, *FileTreeNode] {
 func (n *FileTreeNode) IsDir() bool { return n.File == nil }
 
 // iterate over the children that are directories in sorted order
-func (n *FileTreeNode) Dirs() iter.Seq2[string, *FileTreeNode] {
-	return func(yield func(string, *FileTreeNode) bool) {
+func (n *FileTreeNode) Dirs() iter.Seq[*FileTreeNode] {
+	return func(yield func(*FileTreeNode) bool) {
 		names := slices.Collect(maps.Keys(n.children))
 		slices.Sort(names)
 		for _, name := range names {
@@ -181,7 +185,7 @@ func (n *FileTreeNode) Dirs() iter.Seq2[string, *FileTreeNode] {
 			if !child.IsDir() {
 				continue
 			}
-			if !yield(name, child) {
+			if !yield(child) {
 				return
 			}
 		}
@@ -189,8 +193,8 @@ func (n *FileTreeNode) Dirs() iter.Seq2[string, *FileTreeNode] {
 }
 
 // iterate over the children that are files is sorted order
-func (n *FileTreeNode) Files() iter.Seq2[string, *FileTreeNode] {
-	return func(yield func(string, *FileTreeNode) bool) {
+func (n *FileTreeNode) Files() iter.Seq[*FileTreeNode] {
+	return func(yield func(*FileTreeNode) bool) {
 		names := slices.Collect(maps.Keys(n.children))
 		slices.Sort(names)
 		for _, name := range names {
@@ -198,7 +202,7 @@ func (n *FileTreeNode) Files() iter.Seq2[string, *FileTreeNode] {
 			if child.IsDir() {
 				continue
 			}
-			if !yield(name, child) {
+			if !yield(child) {
 				return
 			}
 		}
