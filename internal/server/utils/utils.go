@@ -26,15 +26,23 @@ func FileSize(byteSize int64) string {
 	return fmt.Sprintf("%0.2f %s", scaled, unit)
 }
 
-func ObjectPath(id string, logicalPath string) templ.SafeURL {
+func ObjectPath(id string, version string, logicalPath string) templ.SafeURL {
 	if id == "" {
 		return ""
 	}
-	urlPath := "/object/" + url.PathEscape(id)
-	if fs.ValidPath(logicalPath) {
-		urlPath += "?path=" + url.QueryEscape(logicalPath)
+	result := url.URL{
+		Path: "/object/" + url.PathEscape(id),
 	}
-	return templ.URL(urlPath)
+	query := result.Query()
+	if version != "" {
+		query.Add("version", version)
+	}
+
+	if fs.ValidPath(logicalPath) {
+		query.Add("path", logicalPath)
+	}
+	result.RawQuery = query.Encode()
+	return templ.URL(result.String())
 }
 
 func DownloadPath(id string, contentPath string) templ.SafeURL {

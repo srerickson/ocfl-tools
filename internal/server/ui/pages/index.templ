@@ -29,7 +29,7 @@ templ Index(objects iter.Seq[*model.IndexObject]) {
 				for obj := range objects {
 					@table.Row() {
 						@table.Cell() {
-							<a href={ utils.ObjectPath(obj.ID,"") } class="text-blue-600 hover:text-blue-800 underline">
+							<a href={ utils.ObjectPath(obj.ID,"", "") } class="text-blue-600 hover:text-blue-800 underline">
 								{ obj.ID }
 							</a>
 						}

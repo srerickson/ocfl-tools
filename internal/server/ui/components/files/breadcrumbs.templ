@@ -1,0 +1,48 @@
+package files
+
+import (
+	"github.com/srerickson/ocfl-tools/internal/server/model"
+	"github.com/srerickson/ocfl-tools/internal/server/utils"
+	"strings"
+)
+
+templ Breadcrumbs(files *model.FileTree) {
+	<span class="inline-flex text-muted-foreground" aria-label="Breadcrumb">
+		<span>Files in</span>
+		<a href={ utils.ObjectPath(files.ObjectID, files.Version(), ".") } class="text-muted-foreground underline underline-offset-1 hover:text-blue-800 ml-1">
+			{ files.Version() }
+		</a>
+		if files.Path() != "." {
+			for _, segment := range getBreadcrumbSegments(files.Path()) {				
+				<span class="mx-1">/</span>
+				<a href={ utils.ObjectPath(files.ObjectID, files.Version(), segment.Path) } class="text-muted-foreground underline underline-offset-1 hover:text-blue-800">
+					{ segment.Name }
+				</a>
+			}
+		}
+	</span>
+}
+
+type BreadcrumbSegment struct {
+	Name string
+	Path string
+}
+
+func getBreadcrumbSegments(currentPath string) []BreadcrumbSegment {
+	if currentPath == "." || currentPath == "" {
+		return nil
+	}
+	segments := []BreadcrumbSegment{}
+	parts := strings.Split(strings.Trim(currentPath, "/"), "/")
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		segmentPath := strings.Join(parts[:i+1], "/")
+		segments = append(segments, BreadcrumbSegment{
+			Name: part,
+			Path: segmentPath,
+		})
+	}
+	return segments
+}
