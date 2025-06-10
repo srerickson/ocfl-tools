@@ -2,14 +2,39 @@ package pages
 
 import (
 	"github.com/srerickson/ocfl-tools/internal/server/model"
+	"github.com/srerickson/ocfl-tools/internal/server/ui/components/accordion"
 	"github.com/srerickson/ocfl-tools/internal/server/ui/components/files"
 	"github.com/srerickson/ocfl-tools/internal/server/ui/layouts"
+	"github.com/srerickson/ocfl-tools/internal/server/utils"
 )
 
 templ Object(obj *model.Object) {
 	@layouts.BaseLayout() {
-		<div class="p-2">
-			<div class="text-xl my-2">{ obj.ID }</div>
+		<div class="my-2">
+			@accordion.Accordion(accordion.Props{Class: "w-full"}) {
+				@accordion.Item() {
+					@accordion.Trigger() {
+						<div class="flex">
+							<div class="flex-none text-xl">{ obj.ID }</div>
+							<div class="grow text-right pr-1">
+								<span class="inline-block align-baseline text-sm">{ obj.Num }</span>
+							</div>
+						</div>
+					}
+					@accordion.Content() {
+						<div class="font-mono  text-sm">
+							<p>
+								<span class="font-semibold">{ obj.Num } created:</span> { utils.FormatDate(obj.Created) }
+							</p>
+							<p><span class="font-semibold">message:</span> "{ obj.Message }"</p>
+							if obj.User != nil {
+								<p><span class="font-semibold">user name:</span> "{ obj.User.Name }"</p>
+								<p><span class="font-semibold">user address:</span> "{ obj.User.Address }"</p>
+							}
+						</div>
+					}
+				}
+			}
 		</div>
 		@files.List(obj.Files)
 	}
