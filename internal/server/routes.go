@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path"
 	"strconv"
 
@@ -80,9 +81,10 @@ func handleIndex(logger *slog.Logger, index model.RootIndex) http.HandlerFunc {
 func handleObject(logger *slog.Logger, root *ocfl.Root, index model.RootIndex) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		id := r.PathValue("id")
+		id, _ := url.PathUnescape(r.PathValue("id"))
 		statePath := r.URL.Query().Get("path")
 		version := r.URL.Query().Get("version")
+		//logger.Debug("get oject", "id", id, "version", version, "path", statePath)
 		var obj *ocfl.Object
 		var err error
 		switch {
