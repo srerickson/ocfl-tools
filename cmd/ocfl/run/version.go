@@ -7,7 +7,7 @@ import (
 
 var (
 	// ocfl-tools version
-	Version   = "0.3.2" // may be set by -ldflags
+	Version   = "0.3.3" // may be set by -ldflags
 	BuildTime string    // always set by -ldflags
 )
 
