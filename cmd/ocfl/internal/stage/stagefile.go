@@ -391,8 +391,12 @@ func (s *StageFile) SetLogger(l *slog.Logger) {
 // Add adds a digestsed file to the stage as logical path.
 func (s *StageFile) add(logical string, local *LocalFile, digests digest.Set) error {
 	prevDigest := s.NextState[logical]
-	newDigest, fixity := digests.Split(s.AlgID)
+	newDigest := digests[s.AlgID]
+	if newDigest == "" {
+		return fmt.Errorf("mising %s for %s", s.AlgID, logical)
+	}
 	if prevDigest != newDigest {
+		// logical path added for first time or updated.
 		if conflict := pathConflict(s.NextState, logical); conflict != "" {
 			err := fmt.Errorf("can't add %q because of conflict with %q", logical, conflict)
 			return err
@@ -406,12 +410,16 @@ func (s *StageFile) add(logical string, local *LocalFile, digests digest.Set) er
 		}
 		s.NextState[logical] = newDigest
 	}
-	if len(fixity) > 0 {
-		s.Fixity[newDigest] = fixity
+	if len(digests) > 1 {
+		// also add new fixity digests
+		delete(digests, s.AlgID)
+		s.Fixity[newDigest] = digests
 	}
+	// digest is duplicate of previously added content.
 	alreadyCommitted := slices.Contains(s.ExistingDigests, newDigest)
+	// digest is duplicate of previously staged files
 	_, alreadyStaged := s.LocalContent[newDigest]
-	if !alreadyCommitted && !alreadyStaged {
+	if !(alreadyCommitted || alreadyStaged) {
 		s.LocalContent[newDigest] = local
 	}
 	return nil

@@ -11,7 +11,7 @@ require (
 	github.com/carlmjohnson/be v0.23.2
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/log v0.4.2
-	github.com/srerickson/ocfl-go v0.9.1
+	github.com/srerickson/ocfl-go v0.10.1
 	golang.org/x/exp v0.0.0-20250531010427-b6e5de432a8b
 )
 
