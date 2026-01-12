@@ -23,7 +23,6 @@ func TestExtensionCmd(t *testing.T) {
 		args := []string{
 			"extension",
 			"--root", tmpDir,
-			"--root-extension",
 		}
 		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
 			be.NilErr(t, err)
@@ -35,7 +34,6 @@ func TestExtensionCmd(t *testing.T) {
 		args := []string{
 			"extension",
 			"--root", tmpDir,
-			"--root-extension",
 			"--name", "0004-hashed-n-tuple-storage-layout",
 		}
 		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
@@ -49,7 +47,6 @@ func TestExtensionCmd(t *testing.T) {
 		args := []string{
 			"extension",
 			"--root", tmpDir,
-			"--root-extension",
 			"--name", "nonexistent",
 		}
 		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
@@ -62,7 +59,6 @@ func TestExtensionCmd(t *testing.T) {
 		args := []string{
 			"extension",
 			"--root", tmpDir,
-			"--root-extension",
 			"--name", "0002-flat-direct-storage-layout",
 			"--create",
 		}
@@ -82,7 +78,6 @@ func TestExtensionCmd(t *testing.T) {
 		args := []string{
 			"extension",
 			"--root", tmpDir,
-			"--root-extension",
 			"--name", "unknown-extension",
 			"--create",
 		}
@@ -96,7 +91,6 @@ func TestExtensionCmd(t *testing.T) {
 		args := []string{
 			"extension",
 			"--root", tmpDir,
-			"--root-extension",
 			"--name", "0004-hashed-n-tuple-storage-layout",
 			"--set", "tupleSize:5",
 		}
@@ -115,7 +109,6 @@ func TestExtensionCmd(t *testing.T) {
 		args := []string{
 			"extension",
 			"--root", tmpDir,
-			"--root-extension",
 			"--name", "0004-hashed-n-tuple-storage-layout",
 			"--set", `custom.nested:"value"`,
 		}
@@ -134,7 +127,6 @@ func TestExtensionCmd(t *testing.T) {
 		args := []string{
 			"extension",
 			"--root", tmpDir,
-			"--root-extension",
 			"--name", "0004-hashed-n-tuple-storage-layout",
 			"--unset", "custom.nested",
 		}
@@ -152,7 +144,6 @@ func TestExtensionCmd(t *testing.T) {
 		args := []string{
 			"extension",
 			"--root", tmpDir,
-			"--root-extension",
 			"--name", "my-custom-extension",
 			"--set", `myField:"myValue"`,
 		}
@@ -171,7 +162,6 @@ func TestExtensionCmd(t *testing.T) {
 		args := []string{
 			"extension",
 			"--root", tmpDir,
-			"--root-extension",
 			"--name", "my-custom-extension",
 			"--remove",
 		}
@@ -198,25 +188,10 @@ func TestExtensionCmd(t *testing.T) {
 		})
 	})
 
-	t.Run("error: root-extension with id", func(t *testing.T) {
-		args := []string{
-			"extension",
-			"--root", tmpDir,
-			"--root-extension",
-			"--id", "obj1",
-			"--name", "ext",
-			"--set", "a:1",
-		}
-		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
-			be.Nonzero(t, err)
-		})
-	})
-
 	t.Run("error: name required for modification", func(t *testing.T) {
 		args := []string{
 			"extension",
 			"--root", tmpDir,
-			"--root-extension",
 			"--set", "a:1",
 		}
 		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
@@ -229,22 +204,9 @@ func TestExtensionCmd(t *testing.T) {
 		args := []string{
 			"extension",
 			"--root", tmpDir,
-			"--root-extension",
 			"--name", "ext",
 			"--set", "a:1",
 			"--remove",
-		}
-		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
-			be.Nonzero(t, err)
-		})
-	})
-
-	t.Run("error: no target specified", func(t *testing.T) {
-		args := []string{
-			"extension",
-			"--root", tmpDir,
-			"--name", "ext",
-			"--set", "a:1",
 		}
 		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
 			be.Nonzero(t, err)

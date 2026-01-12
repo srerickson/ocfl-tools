@@ -19,26 +19,19 @@ const (
 )
 
 type ExtensionCmd struct {
-	RootExtension bool   `name:"root-extension" help:"Update storage root extension (instead of object extension)"`
-	ObjPath       string `name:"object" help:"Full path to object root. Cannot be combined with --id."`
-	ID            string `name:"id" short:"i" help:"The ID of the object to update. Cannot be combined with --object."`
-	Name          string `name:"name" help:"Extension name. If omitted, lists all extensions."`
-	Create        bool   `name:"create" help:"Create extension with default values"`
-	Set           string `name:"set" help:"Field and value to set, format: 'field.path:jsonValue'"`
-	Unset         string `name:"unset" help:"Field to remove from extension's config.json"`
-	Remove        bool   `name:"remove" help:"Remove the extension and all its content"`
+	ObjPath string `name:"object" help:"Full path to object root. Cannot be combined with --id. If neither --object nor --id is provided, operates on storage root extensions."`
+	ID      string `name:"id" short:"i" help:"The ID of the object to update. Cannot be combined with --object. If neither --object nor --id is provided, operates on storage root extensions."`
+	Name    string `name:"name" help:"Extension name. If omitted, lists all extensions."`
+	Create  bool   `name:"create" help:"Create extension with default values"`
+	Set     string `name:"set" help:"Field and value to set, format: 'field.path:jsonValue'"`
+	Unset   string `name:"unset" help:"Field to remove from extension's config.json"`
+	Remove  bool   `name:"remove" help:"Remove the extension and all its content"`
 }
 
 func (cmd *ExtensionCmd) Run(g *globals) error {
 	// Validate flag combinations
 	if cmd.ID != "" && cmd.ObjPath != "" {
 		return errors.New("--id and --object cannot be used together")
-	}
-	if !cmd.RootExtension && cmd.ID == "" && cmd.ObjPath == "" {
-		return errors.New("must specify --root-extension, --id, or --object")
-	}
-	if cmd.RootExtension && (cmd.ID != "" || cmd.ObjPath != "") {
-		return errors.New("--root-extension cannot be combined with --id or --object")
 	}
 
 	// Count modification operations
@@ -71,7 +64,8 @@ func (cmd *ExtensionCmd) Run(g *globals) error {
 	var extsDirPath string
 	var err error
 
-	if cmd.RootExtension {
+	if cmd.ID == "" && cmd.ObjPath == "" {
+		// No object specified, operate on storage root extensions
 		fsys, extsDirPath, err = cmd.getRootExtensionsPath(g)
 	} else {
 		fsys, extsDirPath, err = cmd.getObjectExtensionsPath(g)
