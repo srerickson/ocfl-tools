@@ -3,4 +3,4 @@
 .claude
 cmd/ocfl/ocfl
 dist/
-ocfl
+/ocfl
