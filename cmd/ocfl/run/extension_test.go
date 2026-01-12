@@ -19,6 +19,79 @@ func TestExtensionCmd(t *testing.T) {
 		be.NilErr(t, err)
 	})
 
+	t.Run("list extensions", func(t *testing.T) {
+		args := []string{
+			"extension",
+			"--root", tmpDir,
+			"--root-extension",
+		}
+		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.In(t, "0004-hashed-n-tuple-storage-layout", stdout)
+		})
+	})
+
+	t.Run("show extension config", func(t *testing.T) {
+		args := []string{
+			"extension",
+			"--root", tmpDir,
+			"--root-extension",
+			"--name", "0004-hashed-n-tuple-storage-layout",
+		}
+		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.In(t, `"extensionName": "0004-hashed-n-tuple-storage-layout"`, stdout)
+			be.In(t, `"tupleSize"`, stdout)
+		})
+	})
+
+	t.Run("show nonexistent extension", func(t *testing.T) {
+		args := []string{
+			"extension",
+			"--root", tmpDir,
+			"--root-extension",
+			"--name", "nonexistent",
+		}
+		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "not found", err.Error())
+		})
+	})
+
+	t.Run("create extension with defaults", func(t *testing.T) {
+		args := []string{
+			"extension",
+			"--root", tmpDir,
+			"--root-extension",
+			"--name", "0002-flat-direct-storage-layout",
+			"--create",
+		}
+		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.In(t, "created extension", stderr)
+		})
+
+		// Verify config was created
+		configPath := filepath.Join(tmpDir, "extensions", "0002-flat-direct-storage-layout", "config.json")
+		data, err := os.ReadFile(configPath)
+		be.NilErr(t, err)
+		be.In(t, `"extensionName": "0002-flat-direct-storage-layout"`, string(data))
+	})
+
+	t.Run("create unknown extension fails", func(t *testing.T) {
+		args := []string{
+			"extension",
+			"--root", tmpDir,
+			"--root-extension",
+			"--name", "unknown-extension",
+			"--create",
+		}
+		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "unknown extension", err.Error())
+		})
+	})
+
 	t.Run("set field on root extension", func(t *testing.T) {
 		args := []string{
 			"extension",
@@ -75,22 +148,22 @@ func TestExtensionCmd(t *testing.T) {
 		be.NotIn(t, `"nested": "value"`, string(data))
 	})
 
-	t.Run("create new extension", func(t *testing.T) {
+	t.Run("create new custom extension with set", func(t *testing.T) {
 		args := []string{
 			"extension",
 			"--root", tmpDir,
 			"--root-extension",
-			"--name", "my-new-extension",
+			"--name", "my-custom-extension",
 			"--set", `myField:"myValue"`,
 		}
 		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
 			be.NilErr(t, err)
 		})
 
-		configPath := filepath.Join(tmpDir, "extensions", "my-new-extension", "config.json")
+		configPath := filepath.Join(tmpDir, "extensions", "my-custom-extension", "config.json")
 		data, err := os.ReadFile(configPath)
 		be.NilErr(t, err)
-		be.In(t, `"extensionName": "my-new-extension"`, string(data))
+		be.In(t, `"extensionName": "my-custom-extension"`, string(data))
 		be.In(t, `"myField": "myValue"`, string(data))
 	})
 
@@ -99,14 +172,14 @@ func TestExtensionCmd(t *testing.T) {
 			"extension",
 			"--root", tmpDir,
 			"--root-extension",
-			"--name", "my-new-extension",
+			"--name", "my-custom-extension",
 			"--remove",
 		}
 		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
 			be.NilErr(t, err)
 		})
 
-		extDir := filepath.Join(tmpDir, "extensions", "my-new-extension")
+		extDir := filepath.Join(tmpDir, "extensions", "my-custom-extension")
 		_, err := os.Stat(extDir)
 		be.True(t, os.IsNotExist(err))
 	})
@@ -139,15 +212,16 @@ func TestExtensionCmd(t *testing.T) {
 		})
 	})
 
-	t.Run("error: no operation specified", func(t *testing.T) {
+	t.Run("error: name required for modification", func(t *testing.T) {
 		args := []string{
 			"extension",
 			"--root", tmpDir,
 			"--root-extension",
-			"--name", "ext",
+			"--set", "a:1",
 		}
 		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
 			be.Nonzero(t, err)
+			be.In(t, "--name is required", err.Error())
 		})
 	})
 
@@ -205,6 +279,18 @@ func TestExtensionCmd_Object(t *testing.T) {
 		be.NilErr(t, err)
 	})
 
+	t.Run("list extensions on object (empty)", func(t *testing.T) {
+		args := []string{
+			"extension",
+			"--root", tmpDir,
+			"--id", "test-obj",
+		}
+		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.In(t, "no extensions found", stdout)
+		})
+	})
+
 	t.Run("add extension to object via id", func(t *testing.T) {
 		args := []string{
 			"extension",
@@ -216,6 +302,31 @@ func TestExtensionCmd_Object(t *testing.T) {
 		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
 			be.NilErr(t, err)
 			be.In(t, "set extension config field", stderr)
+		})
+	})
+
+	t.Run("list extensions on object (has extension)", func(t *testing.T) {
+		args := []string{
+			"extension",
+			"--root", tmpDir,
+			"--id", "test-obj",
+		}
+		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.In(t, "my-obj-ext", stdout)
+		})
+	})
+
+	t.Run("show extension on object", func(t *testing.T) {
+		args := []string{
+			"extension",
+			"--root", tmpDir,
+			"--id", "test-obj",
+			"--name", "my-obj-ext",
+		}
+		testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.In(t, `"objField": "objValue"`, stdout)
 		})
 	})
 

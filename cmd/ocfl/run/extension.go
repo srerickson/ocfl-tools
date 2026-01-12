@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path"
 	"strings"
 
 	ocflfs "github.com/srerickson/ocfl-go/fs"
+	"github.com/srerickson/ocfl-go/extension"
 )
 
 const (
@@ -20,7 +22,8 @@ type ExtensionCmd struct {
 	RootExtension bool   `name:"root-extension" help:"Update storage root extension (instead of object extension)"`
 	ObjPath       string `name:"object" help:"Full path to object root. Cannot be combined with --id."`
 	ID            string `name:"id" short:"i" help:"The ID of the object to update. Cannot be combined with --object."`
-	Name          string `name:"name" required:"" help:"Extension name (required)"`
+	Name          string `name:"name" help:"Extension name. If omitted, lists all extensions."`
+	Create        bool   `name:"create" help:"Create extension with default values"`
 	Set           string `name:"set" help:"Field and value to set, format: 'field.path:jsonValue'"`
 	Unset         string `name:"unset" help:"Field to remove from extension's config.json"`
 	Remove        bool   `name:"remove" help:"Remove the extension and all its content"`
@@ -37,11 +40,8 @@ func (cmd *ExtensionCmd) Run(g *globals) error {
 	if cmd.RootExtension && (cmd.ID != "" || cmd.ObjPath != "") {
 		return errors.New("--root-extension cannot be combined with --id or --object")
 	}
-	if cmd.Name == "" {
-		return errors.New("--name is required")
-	}
 
-	// Validate mutually exclusive operations
+	// Count modification operations
 	opsCount := 0
 	if cmd.Set != "" {
 		opsCount++
@@ -49,59 +49,153 @@ func (cmd *ExtensionCmd) Run(g *globals) error {
 	if cmd.Unset != "" {
 		opsCount++
 	}
+	if cmd.Create {
+		opsCount++
+	}
 	if cmd.Remove {
 		opsCount++
 	}
-	if opsCount == 0 {
-		return errors.New("must specify one of --set, --unset, or --remove")
-	}
+
+	// Validate mutually exclusive operations
 	if opsCount > 1 {
-		return errors.New("--set, --unset, and --remove are mutually exclusive")
+		return errors.New("--set, --unset, --create, and --remove are mutually exclusive")
 	}
 
-	// Determine the base filesystem and extension path
+	// If a modification operation is specified, --name is required
+	if opsCount > 0 && cmd.Name == "" {
+		return errors.New("--name is required when using --set, --unset, --create, or --remove")
+	}
+
+	// Determine the base filesystem and extensions directory path
 	var fsys ocflfs.FS
-	var extPath string
+	var extsDirPath string
 	var err error
 
 	if cmd.RootExtension {
-		fsys, extPath, err = cmd.getRootExtensionPath(g)
+		fsys, extsDirPath, err = cmd.getRootExtensionsPath(g)
 	} else {
-		fsys, extPath, err = cmd.getObjectExtensionPath(g)
+		fsys, extsDirPath, err = cmd.getObjectExtensionsPath(g)
 	}
 	if err != nil {
 		return err
 	}
 
+	// If no --name provided, list all extensions
+	if cmd.Name == "" {
+		return cmd.listExtensions(g, fsys, extsDirPath)
+	}
+
+	extPath := path.Join(extsDirPath, cmd.Name)
+
 	// Execute the requested operation
 	switch {
 	case cmd.Remove:
 		return cmd.removeExtension(g, fsys, extPath)
+	case cmd.Create:
+		return cmd.createExtension(g, fsys, extPath)
 	case cmd.Set != "":
 		return cmd.setField(g, fsys, extPath)
 	case cmd.Unset != "":
 		return cmd.unsetField(g, fsys, extPath)
+	default:
+		// No modification flag - show current values
+		return cmd.showExtension(g, fsys, extPath)
 	}
-
-	return nil
 }
 
-func (cmd *ExtensionCmd) getRootExtensionPath(g *globals) (ocflfs.FS, string, error) {
+func (cmd *ExtensionCmd) getRootExtensionsPath(g *globals) (ocflfs.FS, string, error) {
 	root, err := g.getRoot()
 	if err != nil {
 		return nil, "", err
 	}
-	extPath := path.Join(root.Path(), extensionsDir, cmd.Name)
-	return root.FS(), extPath, nil
+	extsDirPath := path.Join(root.Path(), extensionsDir)
+	return root.FS(), extsDirPath, nil
 }
 
-func (cmd *ExtensionCmd) getObjectExtensionPath(g *globals) (ocflfs.FS, string, error) {
+func (cmd *ExtensionCmd) getObjectExtensionsPath(g *globals) (ocflfs.FS, string, error) {
 	obj, err := g.newObject(cmd.ID, cmd.ObjPath)
 	if err != nil {
 		return nil, "", err
 	}
-	extPath := path.Join(obj.Path(), extensionsDir, cmd.Name)
-	return obj.FS(), extPath, nil
+	extsDirPath := path.Join(obj.Path(), extensionsDir)
+	return obj.FS(), extsDirPath, nil
+}
+
+func (cmd *ExtensionCmd) listExtensions(g *globals, fsys ocflfs.FS, extsDirPath string) error {
+	entries, err := ocflfs.ReadDir(g.ctx, fsys, extsDirPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			fmt.Fprintln(g.stdout, "no extensions found")
+			return nil
+		}
+		return fmt.Errorf("reading extensions directory: %w", err)
+	}
+
+	var extNames []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			extNames = append(extNames, entry.Name())
+		}
+	}
+
+	if len(extNames) == 0 {
+		fmt.Fprintln(g.stdout, "no extensions found")
+		return nil
+	}
+
+	for _, name := range extNames {
+		fmt.Fprintln(g.stdout, name)
+	}
+	return nil
+}
+
+func (cmd *ExtensionCmd) showExtension(g *globals, fsys ocflfs.FS, extPath string) error {
+	configPath := path.Join(extPath, configFileName)
+	config, err := readConfig(g, fsys, configPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("extension %q not found", cmd.Name)
+		}
+		return fmt.Errorf("reading extension config: %w", err)
+	}
+
+	// Pretty print the config
+	data, err := json.MarshalIndent(config, "", "    ")
+	if err != nil {
+		return fmt.Errorf("formatting config: %w", err)
+	}
+	fmt.Fprintln(g.stdout, string(data))
+	return nil
+}
+
+func (cmd *ExtensionCmd) createExtension(g *globals, fsys ocflfs.FS, extPath string) error {
+	writeFS, ok := fsys.(ocflfs.WriteFS)
+	if !ok {
+		return errors.New("filesystem does not support write operations")
+	}
+
+	// Get default extension from registry
+	reg := extension.DefaultRegistry()
+	ext, err := reg.New(cmd.Name)
+	if err != nil {
+		return fmt.Errorf("unknown extension %q: %w", cmd.Name, err)
+	}
+
+	// Marshal extension to JSON
+	data, err := json.MarshalIndent(ext, "", "    ")
+	if err != nil {
+		return fmt.Errorf("marshaling extension config: %w", err)
+	}
+	data = append(data, '\n')
+
+	// Write config.json
+	configPath := path.Join(extPath, configFileName)
+	if _, err := ocflfs.Write(g.ctx, writeFS, configPath, strings.NewReader(string(data))); err != nil {
+		return fmt.Errorf("writing config.json: %w", err)
+	}
+
+	g.logger.Info("created extension", "name", cmd.Name, "path", extPath)
+	return nil
 }
 
 func (cmd *ExtensionCmd) removeExtension(g *globals, fsys ocflfs.FS, extPath string) error {
