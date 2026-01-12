@@ -49,6 +49,7 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			"diff_help":      diffHelp,
 			"delete_help":    deleteHelp,
 			"export_help":    exportHelp,
+			"extension_help": extensionHelp,
 			"info_help":      infoHelp,
 			"init_root_help": initRootHelp,
 			"ls_help":        lsHelp,
@@ -100,17 +101,18 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 var cli struct {
 	globals
-	Commit   CommitCmd   `cmd:"" help:"${commit_help}"`
-	Diff     DiffCmd     `cmd:"" help:"${diff_help}"`
-	Delete   DeleteCmd   `cmd:"" help:"${delete_help}"`
-	Export   ExportCmd   `cmd:"" help:"${export_help}"`
-	Info     InfoCmd     `cmd:"" help:"${info_help}"`
-	InitRoot InitRootCmd `cmd:"" help:"${init_root_help}"`
-	Log      LogCmd      `cmd:"" help:"${log_help}"`
-	Ls       LsCmd       `cmd:"" help:"${ls_help}"`
-	Stage    StageCmd    `cmd:"" help:"${stage_help}"`
-	Validate ValidateCmd `cmd:"" help:"${validate_help}"`
-	Version  VersionCmd  `cmd:"" help:"Print ocfl-tools version information"`
+	Commit    CommitCmd    `cmd:"" help:"${commit_help}"`
+	Diff      DiffCmd      `cmd:"" help:"${diff_help}"`
+	Delete    DeleteCmd    `cmd:"" help:"${delete_help}"`
+	Export    ExportCmd    `cmd:"" help:"${export_help}"`
+	Extension ExtensionCmd `cmd:"" help:"${extension_help}"`
+	Info      InfoCmd      `cmd:"" help:"${info_help}"`
+	InitRoot  InitRootCmd  `cmd:"" help:"${init_root_help}"`
+	Log       LogCmd       `cmd:"" help:"${log_help}"`
+	Ls        LsCmd        `cmd:"" help:"${ls_help}"`
+	Stage     StageCmd     `cmd:"" help:"${stage_help}"`
+	Validate  ValidateCmd  `cmd:"" help:"${validate_help}"`
+	Version   VersionCmd   `cmd:"" help:"Print ocfl-tools version information"`
 }
 
 type globals struct {
