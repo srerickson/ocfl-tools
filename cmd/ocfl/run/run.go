@@ -46,6 +46,7 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		kong.Description("command line tool for working with OCFL repositories"),
 		kong.Vars{
 			"commit_help":    commitHelp,
+			"copy_help":      copyHelp,
 			"diff_help":      diffHelp,
 			"delete_help":    deleteHelp,
 			"export_help":    exportHelp,
@@ -101,6 +102,7 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 var cli struct {
 	globals
 	Commit   CommitCmd   `cmd:"" help:"${commit_help}"`
+	Copy     CopyCmd     `cmd:"" help:"${copy_help}"`
 	Diff     DiffCmd     `cmd:"" help:"${diff_help}"`
 	Delete   DeleteCmd   `cmd:"" help:"${delete_help}"`
 	Export   ExportCmd   `cmd:"" help:"${export_help}"`
