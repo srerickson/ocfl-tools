@@ -168,7 +168,7 @@ func (g *globals) parseLocation(loc string) (ocflfs.FS, string, error) {
 			return nil, "", err
 		}
 		s3Client := s3.NewFromConfig(cfg, s3Opts...)
-		fsys := &ocflS3.BucketFS{S3: s3Client, Bucket: bucket, Logger: g.logger}
+		fsys := ocflS3.NewBucketFS(s3Client, bucket, ocflS3.WithLogger(g.logger))
 		return fsys, prefix, nil
 	case "http", "https":
 		fsys := httpfs.New(loc)
@@ -237,7 +237,7 @@ func locationString(fsys ocflfs.FS, dir string) string {
 		}
 		return base + "/" + path.Clean(dir)
 	case *ocflS3.BucketFS:
-		return "s3://" + path.Join(fsys.Bucket, dir)
+		return "s3://" + path.Join(fsys.Bucket(), dir)
 	case *local.FS:
 		localDir, err := filepath.Localize(dir)
 		if err != nil {
