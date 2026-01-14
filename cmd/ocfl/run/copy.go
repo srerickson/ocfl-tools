@@ -27,10 +27,20 @@ func (cmd *CopyCmd) Run(g *globals) error {
 		return errors.New("must provide --id or --object for the source object")
 	}
 
+	// Check for copy to self
+	if cmd.ID != "" && cmd.ID == cmd.To {
+		return errors.New("cannot copy object to itself")
+	}
+
 	// Open source object
 	srcObj, err := g.newObject(cmd.ID, cmd.ObjPath, ocfl.ObjectMustExist())
 	if err != nil {
 		return fmt.Errorf("reading source object: %w", err)
+	}
+
+	// Check for copy to self (by resolved ID)
+	if srcObj.ID() == cmd.To {
+		return errors.New("cannot copy object to itself")
 	}
 
 	// Parse version number

@@ -105,12 +105,42 @@ func TestCopy(t *testing.T) {
 		})
 	})
 
-	t.Run("copy to existing fails", func(t *testing.T) {
+	t.Run("copy to self fails", func(t *testing.T) {
 		srcID := "ark:123/abc"
 		env := map[string]string{"OCFL_ROOT": goodStoreFixture}
 
-		// Try to copy to an ID that already exists
+		// Try to copy to itself
 		args := []string{"copy", "--id", srcID, "--to", srcID, "-n", "tester", "-e", "test@example.com"}
+		testutil.RunCLI(args, env, func(err error, stdout string, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "cannot copy object to itself", stderr)
+		})
+	})
+
+	t.Run("copy to existing fails", func(t *testing.T) {
+		rootPath := filepath.Join(tmpDir, "existing-root")
+		env := map[string]string{"OCFL_ROOT": rootPath}
+
+		// Initialize root and create two objects
+		args := []string{"init-root"}
+		testutil.RunCLI(args, env, func(err error, stdout string, stderr string) {
+			be.NilErr(t, err)
+		})
+
+		// Create first object
+		args = []string{"copy", "--object", goodObjectFixture, "--to", "obj-1", "-n", "tester", "-e", "test@example.com"}
+		testutil.RunCLI(args, env, func(err error, stdout string, stderr string) {
+			be.NilErr(t, err)
+		})
+
+		// Create second object
+		args = []string{"copy", "--object", goodObjectFixture, "--to", "obj-2", "-n", "tester", "-e", "test@example.com"}
+		testutil.RunCLI(args, env, func(err error, stdout string, stderr string) {
+			be.NilErr(t, err)
+		})
+
+		// Try to copy obj-1 to obj-2 (already exists)
+		args = []string{"copy", "--id", "obj-1", "--to", "obj-2", "-n", "tester", "-e", "test@example.com"}
 		testutil.RunCLI(args, env, func(err error, stdout string, stderr string) {
 			be.Nonzero(t, err)
 			be.In(t, "already exists", stderr)
