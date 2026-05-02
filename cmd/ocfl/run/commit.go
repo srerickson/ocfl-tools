@@ -9,12 +9,13 @@ import (
 const commitHelp = "Create or update an object using contents of a local directory"
 
 type CommitCmd struct {
-	ID      string `name:"id" short:"i" help:"The ID for the object to create or update"`
-	Message string `name:"message" short:"m" help:"Message to include in the object version metadata"`
-	Name    string `name:"name" short:"n" help:"Username to include in the object version metadata ($$${env_user_name})"`
-	Email   string `name:"email" short:"e" help:"User email to include in the object version metadata ($$${env_user_email})"`
-	Alg     string `name:"alg" default:"sha512" help:"Digest algorithm (ignored for commits to existing objects)"`
-	Path    string `arg:"" name:"path" help:"local directory with object state to commit"`
+	ID       string `name:"id" short:"i" help:"The ID for the object to create or update"`
+	Message  string `name:"message" short:"m" help:"Message to include in the object version metadata"`
+	Name     string `name:"name" short:"n" help:"Username to include in the object version metadata ($$${env_user_name})"`
+	Email    string `name:"email" short:"e" help:"User email to include in the object version metadata ($$${env_user_email})"`
+	Alg      string `name:"alg" default:"sha512" help:"Digest algorithm (ignored for commits to existing objects)"`
+	NoHidden bool   `name:"no-hidden" help:"exclude hidden files (.*) from the commit path"`
+	Path     string `arg:"" name:"path" help:"local directory with object state to commit"`
 }
 
 func (cmd *CommitCmd) Run(g *globals) error {
@@ -32,7 +33,11 @@ func (cmd *CommitCmd) Run(g *globals) error {
 		return err
 	}
 	changes.SetLogger(g.logger)
-	if err := changes.AddDir(ctx, cmd.Path, stage.AddAndRemove()); err != nil {
+	opts := []stage.AddOption{stage.AddAndRemove()}
+	if cmd.NoHidden {
+		opts = append(opts, stage.AddWithoutHidden())
+	}
+	if err := changes.AddDir(ctx, cmd.Path, opts...); err != nil {
 		return err
 	}
 	if cmd.Name == "" {

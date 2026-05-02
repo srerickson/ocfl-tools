@@ -47,8 +47,8 @@ func TestStage_Example(t *testing.T) {
 	cmd = []string{"stage", "ls", "--file", stagePath}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 		be.NilErr(t, err)
-		expect := "new-stuff/file2.txt\nnew-stuff/sculpture-stone-face-head-888027.jpg\n"
-		be.Equal(t, expect, stdout) // stdout only has two items
+		expect := "new-stuff/.hidden_dir/note.txt\nnew-stuff/.hidden_file\nnew-stuff/file2.txt\nnew-stuff/sculpture-stone-face-head-888027.jpg\n"
+		be.Equal(t, expect, stdout) // stdout has four items (including hidden)
 	})
 	// commit stage
 	cmd = []string{"stage", "commit", "--file", stagePath, "-m", "first commit", "-n", name, "-e", email}
@@ -59,8 +59,8 @@ func TestStage_Example(t *testing.T) {
 	cmd = []string{"ls", "--version", "1", "--id", objID}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 		be.NilErr(t, err)
-		expect := "new-stuff/file2.txt\nnew-stuff/sculpture-stone-face-head-888027.jpg\n"
-		be.Equal(t, expect, stdout) // stdout only has two items
+		expect := "new-stuff/.hidden_dir/note.txt\nnew-stuff/.hidden_file\nnew-stuff/file2.txt\nnew-stuff/sculpture-stone-face-head-888027.jpg\n"
+		be.Equal(t, expect, stdout) // stdout has four items (including hidden)
 	})
 	// stage file should be deleted
 	if _, err := os.Stat(stagePath); err == nil {
@@ -87,10 +87,12 @@ func TestStage_Example(t *testing.T) {
 	// check content for v2
 	cmd = []string{"ls", "--version", "2", "--id", objID}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.In(t, "new-stuff/.hidden_dir/note.txt\n", stdout)
+		be.In(t, "new-stuff/.hidden_file\n", stdout)
 		be.In(t, "new-stuff/file2.txt\n", stdout)
 		be.In(t, "new-stuff/sculpture-stone-face-head-888027.jpg\n", stdout)
 		be.In(t, "tmp/data.csv\n", stdout)
-		be.Equal(t, 3, strings.Count(stdout, "\n")) // three items in v2 state
+		be.Equal(t, 5, strings.Count(stdout, "\n")) // five items in v2 state (including hidden)
 	})
 }
 
@@ -313,6 +315,8 @@ func TestStage_Diff(t *testing.T) {
 			be.NilErr(t, err)
 			expect := []string{
 				"add: folder1/file.txt",
+				"add: folder1/folder2/.hidden_dir/note.txt",
+				"add: folder1/folder2/.hidden_file",
 				"add: folder1/folder2/file2.txt",
 				"add: folder1/folder2/sculpture-stone-face-head-888027.jpg",
 				"add: hello.csv",
@@ -342,7 +346,7 @@ func TestStage_Diff(t *testing.T) {
 			be.Equal(t, "", stdout)
 		})
 		// stage new content
-		cmd = []string{"stage", "add", "--all", "--file", stagePath, contentFixture}
+		cmd = []string{"stage", "add", "--file", stagePath, contentFixture}
 		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 			be.NilErr(t, err)
 		})
