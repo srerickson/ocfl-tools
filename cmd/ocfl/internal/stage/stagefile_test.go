@@ -35,16 +35,16 @@ func TestStageFile_AddDir(t *testing.T) {
 			be.NilErr(t, err)
 			err = changes.AddDir(ctx, contentFixture)
 			be.NilErr(t, err)
-			stageStateMachesDir(t, changes, contentFixture, false, ".")
+			stageStateMachesDir(t, changes, contentFixture, true, ".")
 			be.NilErr(t, stageErrors(changes))
 		})
 
-		t.Run("with hidden", func(t *testing.T) {
+		t.Run("without hidden", func(t *testing.T) {
 			changes, err := stage.NewStageFile(newObj, "sha512")
 			be.NilErr(t, err)
-			err = changes.AddDir(ctx, contentFixture, stage.AddWithHidden())
+			err = changes.AddDir(ctx, contentFixture, stage.AddWithoutHidden())
 			be.NilErr(t, err)
-			stageStateMachesDir(t, changes, contentFixture, true, ".")
+			stageStateMachesDir(t, changes, contentFixture, false, ".")
 			be.NilErr(t, stageErrors(changes))
 		})
 
@@ -53,7 +53,7 @@ func TestStageFile_AddDir(t *testing.T) {
 			be.NilErr(t, err)
 			err = changes.AddDir(ctx, contentFixture, stage.AddDigestJobs(2))
 			be.NilErr(t, err)
-			stageStateMachesDir(t, changes, contentFixture, false, ".")
+			stageStateMachesDir(t, changes, contentFixture, true, ".")
 			be.NilErr(t, stageErrors(changes))
 		})
 
@@ -62,7 +62,7 @@ func TestStageFile_AddDir(t *testing.T) {
 			be.NilErr(t, err)
 			err = changes.AddDir(ctx, contentFixture, stage.AddAndRemove())
 			be.NilErr(t, err)
-			stageStateMachesDir(t, changes, contentFixture, false, ".")
+			stageStateMachesDir(t, changes, contentFixture, true, ".")
 			be.NilErr(t, stageErrors(changes))
 		})
 
@@ -71,7 +71,7 @@ func TestStageFile_AddDir(t *testing.T) {
 			be.NilErr(t, err)
 			err = changes.AddDir(ctx, contentFixture, stage.AddAs("tmp"))
 			be.NilErr(t, err)
-			stageStateMachesDir(t, changes, contentFixture, false, "tmp")
+			stageStateMachesDir(t, changes, contentFixture, true, "tmp")
 			be.NilErr(t, stageErrors(changes))
 		})
 
@@ -148,7 +148,7 @@ func TestStageFile_AddDir(t *testing.T) {
 			be.Nonzero(t, changes.NextState[aFile])
 			be.NilErr(t, changes.AddDir(ctx, contentFixture, stage.AddAndRemove()))
 			// the file has been removed
-			stageStateMachesDir(t, changes, contentFixture, false, ".")
+			stageStateMachesDir(t, changes, contentFixture, true, ".")
 			be.NilErr(t, stageErrors(changes))
 		})
 	})

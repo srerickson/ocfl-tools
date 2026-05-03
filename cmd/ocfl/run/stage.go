@@ -71,11 +71,11 @@ func (cmd *NewStageCmd) Run(g *globals) error {
 // stage add
 type StageAddCmd struct {
 	stageCmdBase
-	All    bool   `name:"all" help:"include hidden files (.*) in path. Ignored if path is a file."`
-	As     string `name:"as" help:"logical name for the new content. Default: base name if path is a file; '.' if path is a directory."`
-	Jobs   int    `name:"jobs" short:"j" default:"0" help:"number of files to digest concurrently. Defaults to the number of CPU cores."`
-	Remove bool   `name:"remove" help:"also remove staged files not found in the path. Ignored if path is a file."`
-	Path   string `arg:"" help:"file or parent directory for content to add to the stage"`
+	NoHidden bool   `name:"no-hidden" help:"exclude hidden files and directories (.*). Ignored if path is a file."`
+	As       string `name:"as" help:"logical name for the new content. Default: base name if path is a file; '.' if path is a directory."`
+	Jobs     int    `name:"jobs" short:"j" default:"0" help:"number of files to digest concurrently. Defaults to the number of CPU cores."`
+	Remove   bool   `name:"remove" help:"also remove staged files not found in the path. Ignored if path is a file."`
+	Path     string `arg:"" help:"file or parent directory for content to add to the stage"`
 }
 
 func (cmd *StageAddCmd) Run(g *globals) error {
@@ -104,8 +104,8 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 		if cmd.Remove {
 			opts = append(opts, stage.AddAndRemove())
 		}
-		if cmd.All {
-			opts = append(opts, stage.AddWithHidden())
+		if cmd.NoHidden {
+			opts = append(opts, stage.AddWithoutHidden())
 		}
 		err = changes.AddDir(ctx, absPath, opts...)
 	case ftype.IsRegular():
@@ -176,7 +176,6 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 // stage diff
 type StageDiffCmd struct {
 	stageCmdBase
-	All bool   `name:"all" help:"include hidden files when used with --dir"`
 	Dir string `name:"dir" help:"use a local directory rather than upstream object as basis for comparison to the stage."`
 }
 
@@ -197,9 +196,6 @@ func (cmd *StageDiffCmd) Run(g *globals) error {
 		}
 		alg := algs[0]
 		filesIter, walkErr := ocflfs.UntilErr(ocflfs.WalkFiles(ctx, ocflfs.DirFS(cmd.Dir), "."))
-		if !cmd.All {
-			filesIter = ocflfs.FilterFiles(filesIter, ocflfs.IsNotHidden)
-		}
 		for result, err := range digest.DigestFiles(ctx, filesIter, alg) {
 			if err != nil {
 				return err

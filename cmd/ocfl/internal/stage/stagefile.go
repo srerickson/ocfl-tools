@@ -165,7 +165,7 @@ func (s *StageFile) AddFile(localPath string, opts ...AddOption) error {
 }
 
 // AddDir walks files in a localDir and generates digests for files using the
-// stage's digest algorithm. By default hidden files are ignored. See
+// stage's digest algorithm. By default hidden files are included. See
 // [AddOption] functions for ways to customize this.
 func (s *StageFile) AddDir(ctx context.Context, localDir string, opts ...AddOption) error {
 	addConf := addConfig{}
@@ -229,7 +229,7 @@ func (s *StageFile) AddDir(ctx context.Context, localDir string, opts ...AddOpti
 		}
 	}
 	filesIter, walkErr := ocflfs.UntilErr(ocflfs.WalkFiles(ctx, localFS, "."))
-	if !addConf.withHidden {
+	if addConf.noHidden {
 		filesIter = ocflfs.FilterFiles(filesIter, ocflfs.IsNotHidden)
 	}
 	for result, err := range digest.DigestFilesBatch(ctx, filesIter, addConf.gos, alg, fixity...) {
@@ -436,10 +436,10 @@ type LocalFile struct {
 type AddOption func(c *addConfig)
 
 type addConfig struct {
-	as         string
-	withHidden bool
-	remove     bool
-	gos        int
+	as       string
+	noHidden bool
+	remove   bool
+	gos      int
 }
 
 // AddAs sets the logical name for staged content. When used with [AddDir], name
@@ -461,11 +461,22 @@ func AddAndRemove() AddOption {
 	}
 }
 
-// AddWithHidden is an option for [AddDir] to included hidden files and directories
-// from the source directory. This options is ignored if used with [AddFile].
+// AddWithHidden is an option for [AddDir] that is now a no-op.
+// Hidden files are included by default. Use [AddWithoutHidden] to exclude them.
+//
+// Deprecated: Hidden files are now included by default.
 func AddWithHidden() AddOption {
 	return func(c *addConfig) {
-		c.withHidden = true
+		// no-op: hidden files are included by default
+	}
+}
+
+// AddWithoutHidden is an option for [AddDir] to exclude hidden files and
+// directories from the source directory. This option is ignored if used with
+// [AddFile].
+func AddWithoutHidden() AddOption {
+	return func(c *addConfig) {
+		c.noHidden = true
 	}
 }
 
