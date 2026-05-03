@@ -176,7 +176,6 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 // stage diff
 type StageDiffCmd struct {
 	stageCmdBase
-	All bool   `name:"all" help:"include hidden files when used with --dir"`
 	Dir string `name:"dir" help:"use a local directory rather than upstream object as basis for comparison to the stage."`
 }
 
@@ -197,9 +196,6 @@ func (cmd *StageDiffCmd) Run(g *globals) error {
 		}
 		alg := algs[0]
 		filesIter, walkErr := ocflfs.UntilErr(ocflfs.WalkFiles(ctx, ocflfs.DirFS(cmd.Dir), "."))
-		if !cmd.All {
-			filesIter = ocflfs.FilterFiles(filesIter, ocflfs.IsNotHidden)
-		}
 		for result, err := range digest.DigestFiles(ctx, filesIter, alg) {
 			if err != nil {
 				return err
