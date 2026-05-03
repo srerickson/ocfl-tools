@@ -14,7 +14,7 @@ type CommitCmd struct {
 	Name     string `name:"name" short:"n" help:"Username to include in the object version metadata ($$${env_user_name})"`
 	Email    string `name:"email" short:"e" help:"User email to include in the object version metadata ($$${env_user_email})"`
 	Alg      string `name:"alg" default:"sha512" help:"Digest algorithm (ignored for commits to existing objects)"`
-	NoHidden bool   `name:"no-hidden" help:"exclude hidden files (.*) from the commit path"`
+	NoHidden bool   `name:"no-hidden" help:"exclude hidden files and directories (.*)"`
 	Path     string `arg:"" name:"path" help:"local directory with object state to commit"`
 }
 

@@ -71,7 +71,7 @@ func (cmd *NewStageCmd) Run(g *globals) error {
 // stage add
 type StageAddCmd struct {
 	stageCmdBase
-	NoHidden bool   `name:"no-hidden" help:"exclude hidden files (.*) from path. Ignored if path is a file."`
+	NoHidden bool   `name:"no-hidden" help:"exclude hidden files and directories (.*). Ignored if path is a file."`
 	As       string `name:"as" help:"logical name for the new content. Default: base name if path is a file; '.' if path is a directory."`
 	Jobs     int    `name:"jobs" short:"j" default:"0" help:"number of files to digest concurrently. Defaults to the number of CPU cores."`
 	Remove   bool   `name:"remove" help:"also remove staged files not found in the path. Ignored if path is a file."`
