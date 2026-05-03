@@ -15,7 +15,7 @@ Using [Homebrew](https://brew.sh/) on MacOS or Linux:
 brew install srerickson/ocfl-tools/ocfl
 ```
 
-If you have [Go](https://go.dev/dl) (v1.23 or greater) installed:
+If you have [Go](https://go.dev/dl) (v1.25 or greater) installed:
 
 ```sh
 go install github.com/srerickson/ocfl-tools/cmd/ocfl@latest
