@@ -42,15 +42,12 @@ changelog:
       - "^docs:"
       - "^test:"
 
-brews:
+homebrew_casks:
   - repository:
       owner: srerickson
       name: homebrew-ocfl-tools
     name: ocfl-tools
     homepage: https://github.com/srerickson/ocfl-tools
     description: Command-line tools for working with OCFL repositories
-    license: MIT
-    install: |
-      bin.install "ocfl"
-    test: |
-      system "#{bin}/ocfl", "version"
+    binaries:
+      - ocfl
