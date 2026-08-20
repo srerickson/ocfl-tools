@@ -9,11 +9,14 @@ storage backends are supported, including the local filesystem, S3, and http
 
 ## Installation
 
-Using [Homebrew](https://brew.sh/) on MacOS or Linux: 
+Using [Homebrew](https://brew.sh/) on MacOS:
 
 ```sh
-brew install srerickson/ocfl-tools/ocfl
+brew install --cask srerickson/ocfl-tools/ocfl
 ```
+
+(Homebrew installs from a cask, which is MacOS-only. On Linux, use `go install`
+or the pre-compiled binaries below.)
 
 If you have [Go](https://go.dev/dl) (v1.25 or greater) installed:
 
