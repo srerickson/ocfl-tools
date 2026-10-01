@@ -9,8 +9,6 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
-	"path"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -19,9 +17,6 @@ import (
 	"github.com/srerickson/ocfl-go"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	fsconfig "github.com/srerickson/ocfl-go/fs/config"
-	ocflhttp "github.com/srerickson/ocfl-go/fs/http"
-	"github.com/srerickson/ocfl-go/fs/local"
-	ocflS3 "github.com/srerickson/ocfl-go/fs/s3"
 )
 
 const (
@@ -258,25 +253,15 @@ func (g *globals) newObject(id, objPath string, opts ...ocfl.ObjectOption) (*ocf
 	return obj, nil
 }
 
+// locationString returns the location string for dir in fsys. The result is a
+// url that parseLocation accepts, so it can be used as a --root or --object
+// value.
 func locationString(fsys ocflfs.FS, dir string) string {
-	switch fsys := fsys.(type) {
-	case *ocflhttp.FS:
-		base := fsys.BaseURL()
-		if dir == "." {
-			return base
-		}
-		return base + "/" + path.Clean(dir)
-	case *ocflS3.BucketFS:
-		return "s3://" + path.Join(fsys.Bucket(), dir)
-	case *local.FS:
-		localDir, err := filepath.Localize(dir)
-		if err != nil {
-			panic(err)
-		}
-		return filepath.Join(fsys.Root(), localDir)
-	default:
-		panic(errors.New("unsupported backend type"))
+	text, err := fsconfig.FSConfig{FS: fsys, Path: dir}.MarshalText()
+	if err != nil {
+		return fmt.Sprintf("%T:%s", fsys, dir)
 	}
+	return string(text)
 }
 
 func newLogger(l log.Level, w io.Writer) *slog.Logger {
