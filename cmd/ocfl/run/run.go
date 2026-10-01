@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -194,21 +196,50 @@ func (g *globals) closeAll() {
 // mkLocalDir creates the directory for loc if loc is a local path or a file
 // url. Local backends require the directory to exist, so this is needed before
 // initializing a new storage root. It does nothing for s3 or http(s) locations.
-func (g *globals) mkLocalDir(loc string) error {
+//
+// The returned function removes whatever mkLocalDir created, so a failed
+// initialization doesn't leave empty directories behind. It never removes
+// directories that already existed or have contents, and is never nil if err is nil.
+func (g *globals) mkLocalDir(loc string) (undo func(), err error) {
+	undo = func() {}
 	if loc == "" {
-		return errors.New("location not set")
+		return nil, errors.New("location not set")
 	}
 	locUrl, err := url.Parse(loc)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	switch {
 	case locUrl.Scheme == "file":
 		loc = locUrl.Path
 	case len(locUrl.Scheme) > 1:
-		return nil // s3, http(s)
+		return undo, nil // s3, http(s)
 	}
-	return os.MkdirAll(loc, 0o777)
+	// find the outermost directory that doesn't exist yet
+	var created string
+	for dir := filepath.Clean(loc); ; dir = filepath.Dir(dir) {
+		if _, err := os.Stat(dir); err == nil || !errors.Is(err, fs.ErrNotExist) {
+			break
+		}
+		created = dir
+		if filepath.Dir(dir) == dir {
+			break
+		}
+	}
+	if err := os.MkdirAll(loc, 0o777); err != nil {
+		return nil, err
+	}
+	if created == "" {
+		return undo, nil
+	}
+	return func() {
+		// remove empty directories from the innermost out, up to created.
+		for dir := filepath.Clean(loc); ; dir = filepath.Dir(dir) {
+			if os.Remove(dir) != nil || dir == created {
+				return
+			}
+		}
+	}, nil
 }
 
 func (g *globals) getRoot() (*ocfl.Root, error) {

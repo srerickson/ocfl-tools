@@ -20,14 +20,26 @@ type InitRootCmd struct {
 }
 
 func (cmd *InitRootCmd) Run(g *globals) error {
-	if err := g.mkLocalDir(g.RootLocation); err != nil {
+	// validate everything that doesn't depend on storage before touching it.
+	spec := ocfl.Spec(cmd.Spec)
+	if err := spec.Valid(); err != nil {
+		return fmt.Errorf("could not initialize storage root: %w", err)
+	}
+	layout, err := extension.DefaultRegistry().NewLayout(cmd.Layout)
+	if err != nil {
+		return fmt.Errorf("could not initialize storage root: %w", err)
+	}
+	undoMkdir, err := g.mkLocalDir(g.RootLocation)
+	if err != nil {
 		return err
 	}
 	fsys, dir, err := g.parseLocation(g.RootLocation)
 	if err != nil {
+		undoMkdir()
 		return err
 	}
 	if fsys == nil {
+		undoMkdir()
 		return errors.New("location for new storage root is required")
 	}
 	if _, err := ocfl.NewRoot(g.ctx, fsys, dir); err == nil {
@@ -38,13 +50,9 @@ func (cmd *InitRootCmd) Run(g *globals) error {
 		}
 		return errors.New(msg)
 	}
-	spec := ocfl.Spec(cmd.Spec)
-	layout, err := extension.DefaultRegistry().NewLayout(cmd.Layout)
-	if err != nil {
-		return fmt.Errorf("could not initialize storage root: %w", err)
-	}
 	root, err := ocfl.NewRoot(g.ctx, fsys, dir, ocfl.InitRoot(spec, cmd.Description, layout))
 	if err != nil {
+		undoMkdir()
 		return fmt.Errorf("while initializing storage root: %w", err)
 	}
 	printRootInfo(root, g.stdout, g.logger)
