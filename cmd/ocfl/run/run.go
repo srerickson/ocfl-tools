@@ -32,9 +32,7 @@ const (
 	// if "true", enable path-style addressing for s3
 	envVarS3PathStyle = "OCFL_S3_PATHSTYLE"
 
-	// keys that can be used in tests
-	envVarAWSKey      = "AWS_ACCESS_KEY_ID"
-	envVarAWSSecret   = "AWS_SECRET_ACCESS_KEY"
+	// s3 settings used as defaults for s3:// locations
 	envVarAWSEndpoint = "AWS_ENDPOINT_URL"
 	envVarAWSRegion   = "AWS_REGION"
 )
