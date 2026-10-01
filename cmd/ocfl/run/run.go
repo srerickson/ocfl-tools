@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/alecthomas/kong"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -92,6 +93,9 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if cli.globals.RootLocation == "" {
 		cli.globals.RootLocation = getenv(envVarRoot)
 	}
+	// release local file descriptors however the command ends (success,
+	// error, panic, or cancellation).
+	defer cli.globals.closeAll()
 	if err := kongCtx.Run(&cli.globals); err != nil {
 		cli.globals.logger.Error(err.Error())
 		return err
@@ -121,6 +125,9 @@ type globals struct {
 	stdin  io.Reader
 	getenv func(string) string
 	logger *slog.Logger
+
+	closeMu sync.Mutex
+	closers []io.Closer // resources opened by parseLocation
 
 	RootLocation string `name:"root" help:"The prefix/directory of the OCFL storage root used for the command ($$${env_root})"`
 	Debug        bool   `name:"debug" help:"enable debug log messages"`
@@ -183,7 +190,28 @@ func (g *globals) parseLocation(loc string) (ocflfs.FS, string, error) {
 		if err != nil {
 			return nil, "", err
 		}
+		g.addCloser(fsys)
 		return fsys, ".", nil
+	}
+}
+
+// addCloser registers c to be closed by closeAll.
+func (g *globals) addCloser(c io.Closer) {
+	g.closeMu.Lock()
+	defer g.closeMu.Unlock()
+	g.closers = append(g.closers, c)
+}
+
+// closeAll closes everything registered with addCloser, in reverse order.
+func (g *globals) closeAll() {
+	g.closeMu.Lock()
+	closers := g.closers
+	g.closers = nil
+	g.closeMu.Unlock()
+	for i := len(closers) - 1; i >= 0; i-- {
+		if err := closers[i].Close(); err != nil && g.logger != nil {
+			g.logger.Warn("closing storage backend", "err", err.Error())
+		}
 	}
 }
 
