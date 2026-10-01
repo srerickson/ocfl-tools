@@ -15,16 +15,13 @@ import (
 	"sync"
 
 	"github.com/alecthomas/kong"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/charmbracelet/log"
 	"github.com/srerickson/ocfl-go"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
+	fsconfig "github.com/srerickson/ocfl-go/fs/config"
+	ocflhttp "github.com/srerickson/ocfl-go/fs/http"
 	"github.com/srerickson/ocfl-go/fs/local"
 	ocflS3 "github.com/srerickson/ocfl-go/fs/s3"
-	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/httpfs"
 )
 
 const (
@@ -133,66 +130,52 @@ type globals struct {
 	Debug        bool   `name:"debug" help:"enable debug log messages"`
 }
 
-// convert a location, which may be a local path or an 's3://' path, into
-// an FS and a path.
+// parseLocation converts a location, which may be a local path or a 'file://',
+// 's3://' or 'http(s)://' url, into an FS and a path within it. Local file
+// systems are closed when the CLI returns.
 func (g *globals) parseLocation(loc string) (ocflfs.FS, string, error) {
 	if loc == "" {
 		return nil, "", errors.New("location not set")
 	}
-	locUrl, err := url.Parse(loc)
+	loc, err := g.withS3Defaults(loc)
 	if err != nil {
 		return nil, "", err
 	}
-	switch locUrl.Scheme {
-	case "s3":
-		var awsOpts []func(*config.LoadOptions) error
-		var s3Opts []func(*s3.Options)
-		bucket := locUrl.Host
-		prefix := strings.TrimPrefix(locUrl.Path, "/")
-		// values passed through getenv are mostly for testing.
-		envKey := g.getenv(envVarAWSKey)
-		envSecret := g.getenv(envVarAWSSecret)
-		envRegion := g.getenv(envVarAWSRegion)
-		envEndpoint := g.getenv(envVarAWSEndpoint)
-		if envKey != "" && envSecret != "" {
-			creds := credentials.NewStaticCredentialsProvider(envKey, envSecret, "")
-			awsOpts = append(awsOpts, config.WithCredentialsProvider(creds))
-		}
-		if envRegion != "" {
-			awsOpts = append(awsOpts, config.WithRegion(envRegion))
-		}
-		if envEndpoint != "" {
-			s3Opts = append(s3Opts, func(o *s3.Options) {
-				o.BaseEndpoint = aws.String(envEndpoint)
-			})
-		}
-		if strings.EqualFold(g.getenv(envVarS3PathStyle), "true") {
-			s3Opts = append(s3Opts, func(o *s3.Options) {
-				o.UsePathStyle = true
-			})
-		}
-		cfg, err := config.LoadDefaultConfig(g.ctx, awsOpts...)
-		if err != nil {
-			return nil, "", err
-		}
-		s3Client := s3.NewFromConfig(cfg, s3Opts...)
-		fsys := ocflS3.NewBucketFS(s3Client, bucket, ocflS3.WithLogger(g.logger))
-		return fsys, prefix, nil
-	case "http", "https":
-		fsys := httpfs.New(loc)
-		return fsys, ".", nil
-	default:
-		absPath, err := filepath.Abs(loc)
-		if err != nil {
-			return nil, "", err
-		}
-		fsys, err := local.NewFS(absPath)
-		if err != nil {
-			return nil, "", err
-		}
-		g.addCloser(fsys)
-		return fsys, ".", nil
+	fsCfg, err := fsconfig.New(g.ctx, loc, fsconfig.WithLogger(g.logger))
+	if err != nil {
+		return nil, "", err
 	}
+	if closer, ok := fsCfg.FS.(io.Closer); ok {
+		g.addCloser(closer)
+	}
+	return fsCfg.FS, fsCfg.Path, nil
+}
+
+// withS3Defaults fills in the region, endpoint, and path-style settings of
+// an s3:// location from the environment (as seen through g.getenv) if they
+// aren't already part of the location. Other locations are returned as-is.
+// Credentials are left to the default AWS configuration.
+func (g *globals) withS3Defaults(loc string) (string, error) {
+	u, err := url.Parse(loc)
+	if err != nil {
+		return "", err
+	}
+	if u.Scheme != "s3" {
+		return loc, nil
+	}
+	q := u.Query()
+	setDefault := func(key, val string) {
+		if val != "" && !q.Has(key) {
+			q.Set(key, val)
+		}
+	}
+	setDefault("region", g.getenv(envVarAWSRegion))
+	setDefault("endpoint", g.getenv(envVarAWSEndpoint))
+	if strings.EqualFold(g.getenv(envVarS3PathStyle), "true") {
+		setDefault("path-style", "true")
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
 // addCloser registers c to be closed by closeAll.
@@ -215,8 +198,8 @@ func (g *globals) closeAll() {
 	}
 }
 
-// mkLocalDir creates the directory for loc if loc is a local path. Local
-// backends require the directory to exist, so this is needed before
+// mkLocalDir creates the directory for loc if loc is a local path or a file
+// url. Local backends require the directory to exist, so this is needed before
 // initializing a new storage root. It does nothing for s3 or http(s) locations.
 func (g *globals) mkLocalDir(loc string) error {
 	if loc == "" {
@@ -226,9 +209,11 @@ func (g *globals) mkLocalDir(loc string) error {
 	if err != nil {
 		return err
 	}
-	switch locUrl.Scheme {
-	case "s3", "http", "https":
-		return nil
+	switch {
+	case locUrl.Scheme == "file":
+		loc = locUrl.Path
+	case len(locUrl.Scheme) > 1:
+		return nil // s3, http(s)
 	}
 	return os.MkdirAll(loc, 0o777)
 }
@@ -277,8 +262,8 @@ func (g *globals) newObject(id, objPath string, opts ...ocfl.ObjectOption) (*ocf
 
 func locationString(fsys ocflfs.FS, dir string) string {
 	switch fsys := fsys.(type) {
-	case *httpfs.FS:
-		base := fsys.URL()
+	case *ocflhttp.FS:
+		base := fsys.BaseURL()
 		if dir == "." {
 			return base
 		}
