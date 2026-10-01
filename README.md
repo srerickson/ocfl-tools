@@ -95,6 +95,16 @@ ocfl log --object /mnt/data/my-root/my-object
 ocfl log --object s3://my-bucket/my-root/my-object
 ```
 
+#### Local paths
+
+Local paths can be given as plain paths (`/mnt/data/my-root`, `my-root`) or as
+`file://` URLs with an absolute path (`file:///mnt/data/my-root`). A relative
+path whose first segment contains a colon (e.g., `ab:c/my-root`) looks like a
+URL with a scheme and is rejected. Prefix it with `./` (`./ab:c/my-root`) or use
+an absolute `file://` URL (`file:///mnt/data/ab:c/my-root`). Note that
+`file://ab:c` is not a valid alternative: the path in a `file://` URL must be
+absolute.
+
 #### S3 configuration
 
 To use S3-based storage, the storage root or object path should have the format:
