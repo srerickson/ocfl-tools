@@ -1,6 +1,6 @@
 .DS_Store
 .tool-versions
 .claude
-cmd/ocfl/ocfl
+/cmd/ocfl/ocfl
 dist/
-ocfl
+/ocfl
