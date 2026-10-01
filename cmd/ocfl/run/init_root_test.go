@@ -1,6 +1,7 @@
 package run_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -94,5 +95,61 @@ func TestInitRoot(t *testing.T) {
 				}
 			})
 		}
+	})
+}
+
+func TestInitRoot_FailureLeavesNoDirectories(t *testing.T) {
+	tmpDir := t.TempDir()
+	for name, args := range map[string][]string{
+		"invalid layout":     {"--layout", "bogus"},
+		"invalid spec":       {"--ocflv", "x"},
+		"unsupported spec":   {"--ocflv", "9.9"},
+		"layout and spec ok": nil, // control: succeeds
+	} {
+		t.Run(name, func(t *testing.T) {
+			parent := filepath.Join(tmpDir, filepath.FromSlash(name))
+			root := filepath.Join(parent, "a", "b", "root")
+			env := map[string]string{"OCFL_ROOT": root}
+			testutil.RunCLI(append([]string{"init-root"}, args...), env, func(err error, stdout, stderr string) {
+				_, statErr := os.Stat(parent)
+				if args == nil {
+					be.NilErr(t, err)
+					be.NilErr(t, statErr)
+					return
+				}
+				be.True(t, err != nil)
+				be.True(t, os.IsNotExist(statErr)) // nothing created
+			})
+		})
+	}
+	t.Run("existing directories are kept", func(t *testing.T) {
+		parent := filepath.Join(tmpDir, "existing")
+		be.NilErr(t, os.MkdirAll(filepath.Join(parent, "keep"), 0o777))
+		root := filepath.Join(parent, "a", "root")
+		env := map[string]string{"OCFL_ROOT": root}
+		testutil.RunCLI([]string{"init-root", "--layout", "bogus"}, env, func(err error, stdout, stderr string) {
+			be.True(t, err != nil)
+		})
+		_, err := os.Stat(filepath.Join(parent, "keep"))
+		be.NilErr(t, err) // preexisting directory untouched
+		_, err = os.Stat(filepath.Join(parent, "a"))
+		be.True(t, os.IsNotExist(err)) // created directory removed
+	})
+	t.Run("file url", func(t *testing.T) {
+		root := filepath.Join(tmpDir, "fileurl", "root")
+		env := map[string]string{"OCFL_ROOT": fileURL(root)}
+		testutil.RunCLI([]string{"init-root", "--layout", "bogus"}, env, func(err error, stdout, stderr string) {
+			be.True(t, err != nil)
+		})
+		_, err := os.Stat(filepath.Join(tmpDir, "fileurl"))
+		be.True(t, os.IsNotExist(err))
+	})
+	t.Run("existing storage root is kept", func(t *testing.T) {
+		root := filepath.Join(tmpDir, "kept", "root")
+		env := map[string]string{"OCFL_ROOT": root}
+		testutil.RunCLI([]string{"init-root"}, env, func(err error, _, _ string) { be.NilErr(t, err) })
+		testutil.RunCLI([]string{"init-root"}, env, func(err error, _, _ string) { be.True(t, err != nil) })
+		_, err := os.Stat(filepath.Join(root, "0=ocfl_1.1"))
+		be.NilErr(t, err)
 	})
 }
