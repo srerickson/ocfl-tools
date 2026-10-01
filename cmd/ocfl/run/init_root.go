@@ -20,6 +20,9 @@ type InitRootCmd struct {
 }
 
 func (cmd *InitRootCmd) Run(g *globals) error {
+	if err := g.mkLocalDir(g.RootLocation); err != nil {
+		return err
+	}
 	fsys, dir, err := g.parseLocation(g.RootLocation)
 	if err != nil {
 		return err
