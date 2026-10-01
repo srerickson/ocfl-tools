@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -184,6 +185,24 @@ func (g *globals) parseLocation(loc string) (ocflfs.FS, string, error) {
 		}
 		return fsys, ".", nil
 	}
+}
+
+// mkLocalDir creates the directory for loc if loc is a local path. Local
+// backends require the directory to exist, so this is needed before
+// initializing a new storage root. It does nothing for s3 or http(s) locations.
+func (g *globals) mkLocalDir(loc string) error {
+	if loc == "" {
+		return errors.New("location not set")
+	}
+	locUrl, err := url.Parse(loc)
+	if err != nil {
+		return err
+	}
+	switch locUrl.Scheme {
+	case "s3", "http", "https":
+		return nil
+	}
+	return os.MkdirAll(loc, 0o777)
 }
 
 func (g *globals) getRoot() (*ocfl.Root, error) {
