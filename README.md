@@ -117,6 +117,10 @@ export AWS_SECRET_ACCESS_KEY="..."
 Additional S3 configuration options:
 - `OCFL_S3_PATHSTYLE=true`: enables [path-style S3 requests](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html#path-style-access)
 
+The region, endpoint, and path-style setting can also be given as query
+parameters in the location, which take precedence over the environment:
+`s3://my-bucket/my-root?region=us-west-2&endpoint=http://localhost:9000&path-style=true`.
+
 #### Read objects using HTTP
 
 For read-only access to OCFL objects over http, you can use the URL of the object's root directory.
