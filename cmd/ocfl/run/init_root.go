@@ -11,8 +11,6 @@ import (
 	"github.com/srerickson/ocfl-go/extension"
 )
 
-const initRootHelp = `Create a new OCFL storage root`
-
 type InitRootCmd struct {
 	Layout      string `name:"layout" short:"l" optional:"" default:"0004-hashed-n-tuple-storage-layout"  help:"The storage root layout extension (see https://ocfl.github.io/extensions/)."`
 	Description string `name:"description" short:"d" optional:"" help:"Description to include in the storage root metadata"`

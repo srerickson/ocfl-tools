@@ -7,8 +7,6 @@ import (
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/stage"
 )
 
-const commitHelp = "Create or update an object using contents of a local directory"
-
 type CommitCmd struct {
 	ID       string `name:"id" short:"i" help:"The ID for the object to create or update"`
 	Message  string `name:"message" short:"m" help:"Message to include in the object version metadata"`

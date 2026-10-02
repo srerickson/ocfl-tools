@@ -46,18 +46,6 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	parser, err := kong.New(&cli, kong.Name("ocfl"),
 		kong.Writers(stdout, stderr),
 		kong.Description("command line tool for working with OCFL repositories"),
-		kong.Vars{
-			"commit_help":    commitHelp,
-			"diff_help":      diffHelp,
-			"delete_help":    deleteHelp,
-			"export_help":    exportHelp,
-			"info_help":      infoHelp,
-			"init_root_help": initRootHelp,
-			"ls_help":        lsHelp,
-			"log_help":       logHelp,
-			"stage_help":     stageHelp,
-			"validate_help":  validateHelp,
-		},
 		kong.ConfigureHelp(kong.HelpOptions{
 			Summary: true,
 			Compact: true,
@@ -160,16 +148,16 @@ type cli struct {
 	RootLocation string `name:"root" ocflenv:"OCFL_ROOT" help:"The prefix/directory of the OCFL storage root used for the command"`
 	Debug        bool   `name:"debug" help:"enable debug log messages"`
 
-	Commit   CommitCmd   `cmd:"" help:"${commit_help}"`
-	Diff     DiffCmd     `cmd:"" help:"${diff_help}"`
-	Delete   DeleteCmd   `cmd:"" help:"${delete_help}"`
-	Export   ExportCmd   `cmd:"" help:"${export_help}"`
-	Info     InfoCmd     `cmd:"" help:"${info_help}"`
-	InitRoot InitRootCmd `cmd:"" help:"${init_root_help}"`
-	Log      LogCmd      `cmd:"" help:"${log_help}"`
-	Ls       LsCmd       `cmd:"" help:"${ls_help}"`
-	Stage    StageCmd    `cmd:"" help:"${stage_help}"`
-	Validate ValidateCmd `cmd:"" help:"${validate_help}"`
+	Commit   CommitCmd   `cmd:"" help:"Create or update an object using contents of a local directory"`
+	Diff     DiffCmd     `cmd:"" help:"Show changed files between versions of an object"`
+	Delete   DeleteCmd   `cmd:"" help:"Delete an object in the storage root"`
+	Export   ExportCmd   `cmd:"" help:"Export object contents to the local filesystem"`
+	Info     InfoCmd     `cmd:"" help:"Show information about an object or the active storage root"`
+	InitRoot InitRootCmd `cmd:"" help:"Create a new OCFL storage root"`
+	Log      LogCmd      `cmd:"" help:"Show an object's revision log"`
+	Ls       LsCmd       `cmd:"" help:"List objects in a storage root or files in an object"`
+	Stage    StageCmd    `cmd:"" help:"commands for working with stages (i.e., object updates)"`
+	Validate ValidateCmd `cmd:"" help:"Validate an object or all objects in the storage root"`
 	Version  VersionCmd  `cmd:"" help:"Print ocfl-tools version information"`
 }
 

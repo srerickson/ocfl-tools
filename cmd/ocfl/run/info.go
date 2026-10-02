@@ -7,8 +7,6 @@ import (
 	"github.com/srerickson/ocfl-go"
 )
 
-const infoHelp = "Show information about an object or the active storage root"
-
 type InfoCmd struct {
 	ID      string `name:"id" short:"i" optional:"" help:"The id for object to show information about"`
 	ObjPath string `name:"object" help:"full path to object root. If set, --root and --id are ignored."`

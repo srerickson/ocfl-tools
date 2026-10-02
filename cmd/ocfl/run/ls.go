@@ -7,8 +7,6 @@ import (
 	"github.com/srerickson/ocfl-go"
 )
 
-const lsHelp = "List objects in a storage root or files in an object"
-
 type LsCmd struct {
 	ID          string `name:"id" short:"i" optional:"" help:"The id of object to list contents from."`
 	ObjPath     string `name:"object" help:"full path to object root. If set, --root and --id are ignored."`
