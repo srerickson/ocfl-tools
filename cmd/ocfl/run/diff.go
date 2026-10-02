@@ -1,6 +1,7 @@
 package run
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -16,12 +17,12 @@ type DiffCmd struct {
 	Vs []int  `name:"versions" short:"v" default:"-1,0" help:"Object versions to compare, separated by commas. 0 refers to HEAD, negative numbers match versions before HEAD."`
 }
 
-func (cmd *DiffCmd) Run(g *globals) error {
-	root, err := g.getRoot()
+func (cmd *DiffCmd) Run(ctx context.Context, env *cmdEnv) error {
+	root, err := env.getRoot(ctx)
 	if err != nil {
 		return err
 	}
-	obj, err := root.NewObject(g.ctx, cmd.ID)
+	obj, err := root.NewObject(ctx, cmd.ID)
 	if err != nil {
 		return fmt.Errorf("reading object id: %q: %w", cmd.ID, err)
 	}
@@ -72,7 +73,7 @@ func (cmd *DiffCmd) Run(g *globals) error {
 		return err
 	}
 	if !result.Empty() {
-		fmt.Fprint(g.stdout, result.String())
+		fmt.Fprint(env.stdout, result.String())
 	}
 	return nil
 }

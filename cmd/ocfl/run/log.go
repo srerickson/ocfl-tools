@@ -1,6 +1,7 @@
 package run
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -14,8 +15,8 @@ type LogCmd struct {
 	ObjPath string `name:"object" help:"full path to object root. If set, --root and --id are ignored."`
 }
 
-func (cmd *LogCmd) Run(g *globals) error {
-	obj, err := g.newObject(cmd.ID, cmd.ObjPath, ocfl.ObjectMustExist())
+func (cmd *LogCmd) Run(ctx context.Context, env *cmdEnv) error {
+	obj, err := env.newObject(ctx, cmd.ID, cmd.ObjPath, ocfl.ObjectMustExist())
 	if err != nil {
 		return err
 	}
@@ -24,11 +25,11 @@ func (cmd *LogCmd) Run(g *globals) error {
 		if version == nil {
 			return errors.New("inventory is missing entry for " + vnum.String())
 		}
-		fmt.Fprintf(g.stdout, "%s (%s): %q", vnum.String(), version.Created(), version.Message())
+		fmt.Fprintf(env.stdout, "%s (%s): %q", vnum.String(), version.Created(), version.Message())
 		if version.User() != nil {
-			fmt.Fprintf(g.stdout, " %s <%s>", version.User().Name, version.User().Address)
+			fmt.Fprintf(env.stdout, " %s <%s>", version.User().Name, version.User().Address)
 		}
-		fmt.Fprintln(g.stdout, "")
+		fmt.Fprintln(env.stdout, "")
 	}
 	return nil
 

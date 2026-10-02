@@ -2,6 +2,7 @@ package run
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"path"
 	"strings"
@@ -18,8 +19,8 @@ type DeleteCmd struct {
 	NotObject bool   `name:"not-object" help:"skip check that files for ID are those of an OCFL object."`
 }
 
-func (cmd *DeleteCmd) Run(g *globals) error {
-	root, err := g.getRoot()
+func (cmd *DeleteCmd) Run(ctx context.Context, env *cmdEnv) error {
+	root, err := env.getRoot(ctx)
 	if err != nil {
 		return err
 	}
@@ -32,25 +33,25 @@ func (cmd *DeleteCmd) Run(g *globals) error {
 		}
 		deletePath = path.Join(root.Path(), objPath)
 	default:
-		obj, err := root.NewObject(g.ctx, cmd.ID, ocfl.ObjectMustExist())
+		obj, err := root.NewObject(ctx, cmd.ID, ocfl.ObjectMustExist())
 		if err != nil {
 			return fmt.Errorf("cannot delete %q: %w", cmd.ID, err)
 		}
 		deletePath = obj.Path()
 	}
 	if !cmd.NoConfirm {
-		fmt.Fprintf(g.stdout, "do you really want to delete all files for %q? [y/N]: ", cmd.ID)
-		reader := bufio.NewReader(g.stdin)
+		fmt.Fprintf(env.stdout, "do you really want to delete all files for %q? [y/N]: ", cmd.ID)
+		reader := bufio.NewReader(env.stdin)
 		line, err := reader.ReadString('\n')
 		response := strings.ToLower(strings.Trim(line, " \n"))
 		if err != nil || response != "y" {
-			fmt.Fprintln(g.stdout, "object not deleted")
+			fmt.Fprintln(env.stdout, "object not deleted")
 			return nil
 		}
 	}
-	if err := ocflfs.RemoveAll(g.ctx, root.FS(), deletePath); err != nil {
+	if err := ocflfs.RemoveAll(ctx, root.FS(), deletePath); err != nil {
 		return fmt.Errorf("deleting %q: %w", cmd.ID, err)
 	}
-	g.logger.Info("deleted object", "object_id", cmd.ID, "object_path", deletePath)
+	env.logger.Info("deleted object", "object_id", cmd.ID, "object_path", deletePath)
 	return nil
 }

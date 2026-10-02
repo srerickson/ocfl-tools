@@ -1,6 +1,7 @@
 package run
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/srerickson/ocfl-go"
@@ -15,22 +16,22 @@ type LsCmd struct {
 	WithDigests bool   `name:"digests" short:"d" help:"Show digests when listing contents of an object version."`
 }
 
-func (cmd *LsCmd) Run(g *globals) error {
+func (cmd *LsCmd) Run(ctx context.Context, env *cmdEnv) error {
 	if cmd.ID == "" && cmd.ObjPath == "" {
 		// list object ids in root
-		root, err := g.getRoot()
+		root, err := env.getRoot(ctx)
 		if err != nil {
 			return err
 		}
-		for obj, err := range root.Objects(g.ctx) {
+		for obj, err := range root.Objects(ctx) {
 			if err != nil {
 				return fmt.Errorf("while listing objects in root: %w", err)
 			}
-			fmt.Fprintln(g.stdout, obj.ID())
+			fmt.Fprintln(env.stdout, obj.ID())
 		}
 		return nil
 	}
-	obj, err := g.newObject(cmd.ID, cmd.ObjPath, ocfl.ObjectMustExist())
+	obj, err := env.newObject(ctx, cmd.ID, cmd.ObjPath, ocfl.ObjectMustExist())
 	if err != nil {
 		return err
 	}
@@ -41,10 +42,10 @@ func (cmd *LsCmd) Run(g *globals) error {
 	}
 	for path, digest := range ver.State().PathMap().SortedPaths() {
 		if cmd.WithDigests {
-			fmt.Fprintln(g.stdout, digest, path)
+			fmt.Fprintln(env.stdout, digest, path)
 			continue
 		}
-		fmt.Fprintln(g.stdout, path)
+		fmt.Fprintln(env.stdout, path)
 	}
 	return nil
 }

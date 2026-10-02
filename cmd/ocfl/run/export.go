@@ -26,12 +26,12 @@ type ExportCmd struct {
 	To       string   `name:"to" short:"t" default:"." help:"The destination directory for writing exported content. For single file exports, use '-' to print file to STDOUT or a file name."`
 }
 
-func (cmd *ExportCmd) Run(g *globals) error {
-	obj, err := g.newObject(cmd.ID, cmd.ObjPath, ocfl.ObjectMustExist())
+func (cmd *ExportCmd) Run(ctx context.Context, env *cmdEnv) error {
+	obj, err := env.newObject(ctx, cmd.ID, cmd.ObjPath, ocfl.ObjectMustExist())
 	if err != nil {
 		return err
 	}
-	versionFS, err := obj.VersionFS(g.ctx, cmd.Version)
+	versionFS, err := obj.VersionFS(ctx, cmd.Version)
 	if err != nil {
 		return err
 	}
@@ -62,7 +62,7 @@ func (cmd *ExportCmd) Run(g *globals) error {
 		if err != nil {
 			return err
 		}
-		return exportFS(g.ctx, g.logger, absTo, subFS, cmd.Replace)
+		return exportFS(ctx, env.logger, absTo, subFS, cmd.Replace)
 	}
 	var matches []string
 	for _, srcFile := range cmd.SrcFiles {
@@ -78,7 +78,7 @@ func (cmd *ExportCmd) Run(g *globals) error {
 	}
 	if cmd.To == "-" {
 		// print first match to STDOUT
-		return exportFile(versionFS, matches[0], false, g.stdout)
+		return exportFile(versionFS, matches[0], false, env.stdout)
 	}
 	exists, isDir, err := stat(absTo)
 	if err != nil {
