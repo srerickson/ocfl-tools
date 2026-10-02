@@ -1,0 +1,14 @@
+Usage: ocfl validate [flags]
+
+Validate an object or all objects in the storage root
+
+Flags:
+  -h, --help             Show context-sensitive help.
+      --root=STRING      The prefix/directory of the OCFL storage root used for
+                         the command ($OCFL_ROOT)
+      --debug            enable debug log messages
+
+  -i, --id=STRING        The id of object to validate
+      --object=STRING    full path to object root. If set, --root and --id are
+                         ignored.
+      --skip-digest      skip digest (checksum) validation

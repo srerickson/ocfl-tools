@@ -1,0 +1,13 @@
+Usage: ocfl delete --id=STRING [flags]
+
+Delete an object in the storage root
+
+Flags:
+  -h, --help           Show context-sensitive help.
+      --root=STRING    The prefix/directory of the OCFL storage root used for
+                       the command ($OCFL_ROOT)
+      --debug          enable debug log messages
+
+  -i, --id=STRING      The ID for the object to delete
+  -y, --yes            skip delete confirmation.
+      --not-object     skip check that files for ID are those of an OCFL object.

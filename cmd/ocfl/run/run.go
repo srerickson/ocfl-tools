@@ -35,6 +35,7 @@ const (
 )
 
 func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) error {
+	var cli cli
 	parser, err := kong.New(&cli, kong.Name("ocfl"),
 		kong.Writers(stdout, stderr),
 		kong.Description("command line tool for working with OCFL repositories"),
@@ -57,13 +58,19 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			Summary: true,
 			Compact: true,
 		}),
+		// --help calls Exit after printing help: return from CLI instead
+		// of exiting the process.
+		kong.Exit(func(code int) { panic(kongExit(code)) }),
 	)
 	if err != nil {
 		fmt.Fprintln(stderr, "in kong configuration:", err.Error())
 		return err
 	}
-	kongCtx, err := parser.Parse(args[1:])
+	kongCtx, err := parse(parser, args[1:])
 	if err != nil {
+		if errors.Is(err, errHelp) {
+			return nil
+		}
 		fmt.Fprintln(stderr, err.Error())
 		var parseErr *kong.ParseError
 		if errors.As(err, &parseErr) {
@@ -95,7 +102,34 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	return nil
 }
 
-var cli struct {
+// kongExit is the panic value used by the parser's exit function.
+type kongExit int
+
+// errHelp is returned by parse if the arguments asked for help, which has
+// been printed.
+var errHelp = errors.New("help requested")
+
+// parse parses args with parser, converting a call to the parser's exit
+// function into an error.
+func parse(parser *kong.Kong, args []string) (kongCtx *kong.Context, err error) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		code, ok := r.(kongExit)
+		if !ok {
+			panic(r)
+		}
+		kongCtx, err = nil, errHelp
+		if code != 0 {
+			err = fmt.Errorf("exit status %d", code)
+		}
+	}()
+	return parser.Parse(args)
+}
+
+type cli struct {
 	globals
 	Commit   CommitCmd   `cmd:"" help:"${commit_help}"`
 	Diff     DiffCmd     `cmd:"" help:"${diff_help}"`

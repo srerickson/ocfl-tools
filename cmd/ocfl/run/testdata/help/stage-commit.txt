@@ -1,0 +1,17 @@
+Usage: ocfl stage commit [flags]
+
+Commit the stage as a new object version
+
+Flags:
+  -h, --help                      Show context-sensitive help.
+      --root=STRING               The prefix/directory of the OCFL storage root
+                                  used for the command ($OCFL_ROOT)
+      --debug                     enable debug log messages
+
+  -f, --file="ocfl-stage.json"    path to stage file
+  -m, --message=STRING            Message to include in the object version
+                                  metadata
+  -n, --name=STRING               Username to include in the object version
+                                  metadata ($OCFL_USER_NAME)
+  -e, --email=STRING              User email to include in the object version
+                                  metadata ($OCFL_USER_EMAIL)

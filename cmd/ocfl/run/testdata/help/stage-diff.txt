@@ -1,0 +1,13 @@
+Usage: ocfl stage diff [flags]
+
+Show changes between an upstream object or directory and the stage
+
+Flags:
+  -h, --help                      Show context-sensitive help.
+      --root=STRING               The prefix/directory of the OCFL storage root
+                                  used for the command ($OCFL_ROOT)
+      --debug                     enable debug log messages
+
+  -f, --file="ocfl-stage.json"    path to stage file
+      --dir=STRING                use a local directory rather than upstream
+                                  object as basis for comparison to the stage.

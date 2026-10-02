@@ -1,0 +1,17 @@
+Usage: ocfl ls [flags]
+
+List objects in a storage root or files in an object
+
+Flags:
+  -h, --help             Show context-sensitive help.
+      --root=STRING      The prefix/directory of the OCFL storage root used for
+                         the command ($OCFL_ROOT)
+      --debug            enable debug log messages
+
+  -i, --id=STRING        The id of object to list contents from.
+      --object=STRING    full path to object root. If set, --root and --id are
+                         ignored.
+  -v, --version=0        The object version number (unpadded) to list contents
+                         from. The default (0) lists the latest version.
+  -d, --digests          Show digests when listing contents of an object
+                         version.

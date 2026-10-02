@@ -1,7 +1,9 @@
 package run_test
 
 import (
+	"flag"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +11,57 @@ import (
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/testutil"
 )
+
+var update = flag.Bool("update", false, "update golden files in testdata")
+
+// TestHelp checks --help output for every command against the golden files in
+// testdata/help. Run with -update after an intended change to the interface or
+// help text, and review the diff.
+func TestHelp(t *testing.T) {
+	t.Setenv("COLUMNS", "80") // help is wrapped to the terminal width
+	cmds := []string{
+		"",
+		"commit",
+		"delete",
+		"diff",
+		"export",
+		"info",
+		"init-root",
+		"log",
+		"ls",
+		"stage",
+		"stage add",
+		"stage commit",
+		"stage diff",
+		"stage ls",
+		"stage new",
+		"stage rm",
+		"stage status",
+		"validate",
+		"version",
+	}
+	for _, cmd := range cmds {
+		name := strings.ReplaceAll(cmd, " ", "-")
+		if name == "" {
+			name = "ocfl"
+		}
+		t.Run(name, func(t *testing.T) {
+			args := append(strings.Fields(cmd), "--help")
+			testutil.RunCLI(args, nil, func(err error, stdout, stderr string) {
+				be.NilErr(t, err)
+				be.Equal(t, "", stderr)
+				golden := filepath.Join("testdata", "help", name+".txt")
+				if *update {
+					be.NilErr(t, os.MkdirAll(filepath.Dir(golden), 0o755))
+					be.NilErr(t, os.WriteFile(golden, []byte(stdout), 0o644))
+				}
+				want, err := os.ReadFile(golden)
+				be.NilErr(t, err)
+				be.Equal(t, string(want), stdout)
+			})
+		})
+	}
+}
 
 func TestRootNotSet(t *testing.T) {
 	// test commands fail if root is not set
