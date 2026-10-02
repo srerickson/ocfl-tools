@@ -9,8 +9,8 @@ import (
 
 type LsCmd struct {
 	objectFlags
-	Version     int    `name:"version" short:"v" default:"0" help:"The object version number (unpadded) to list contents from. The default (0) lists the latest version."`
-	WithDigests bool   `name:"digests" short:"d" help:"Show digests when listing contents of an object version."`
+	Version     int  `name:"version" short:"v" default:"0" help:"The object version number (unpadded) to list contents from. The default (0) lists the latest version."`
+	WithDigests bool `name:"digests" short:"d" help:"Show digests when listing contents of an object version."`
 }
 
 func (cmd *LsCmd) Run(ctx context.Context, env *cmdEnv) error {
