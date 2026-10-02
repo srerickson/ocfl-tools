@@ -11,7 +11,7 @@ import (
 
 type ValidateCmd struct {
 	objectFlags
-	SkipDigest bool   `name:"skip-digest" help:"skip digest (checksum) validation"`
+	SkipDigest bool `name:"skip-digest" help:"skip digest (checksum) validation"`
 }
 
 func (cmd *ValidateCmd) Run(ctx context.Context, env *cmdEnv) error {
