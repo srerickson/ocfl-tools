@@ -1,6 +1,7 @@
 package run
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/srerickson/ocfl-go"
@@ -13,24 +14,24 @@ type InfoCmd struct {
 	ObjPath string `name:"object" help:"full path to object root. If set, --root and --id are ignored."`
 }
 
-func (cmd *InfoCmd) Run(g *globals) error {
+func (cmd *InfoCmd) Run(ctx context.Context, env *cmdEnv) error {
 	if cmd.ID == "" && cmd.ObjPath == "" {
-		root, err := g.getRoot()
+		root, err := env.getRoot(ctx)
 		if err != nil {
 			return err
 		}
-		printRootInfo(root, g.stdout, g.logger)
+		printRootInfo(root, env.stdout, env.logger)
 		return nil
 	}
-	obj, err := g.newObject(cmd.ID, cmd.ObjPath, ocfl.ObjectMustExist())
+	obj, err := env.newObject(ctx, cmd.ID, cmd.ObjPath, ocfl.ObjectMustExist())
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(g.stdout, "object path:", locationString(obj.FS(), obj.Path()))
-	fmt.Fprintln(g.stdout, "id:", obj.ID())
-	fmt.Fprintln(g.stdout, "digest algorithm:", obj.DigestAlgorithm())
-	fmt.Fprintln(g.stdout, "head:", obj.Head())
-	fmt.Fprintln(g.stdout, "OCFL version:", obj.Spec())
-	fmt.Fprintln(g.stdout, "inventory.json", obj.DigestAlgorithm().ID()+":", obj.InventoryDigest())
+	fmt.Fprintln(env.stdout, "object path:", locationString(obj.FS(), obj.Path()))
+	fmt.Fprintln(env.stdout, "id:", obj.ID())
+	fmt.Fprintln(env.stdout, "digest algorithm:", obj.DigestAlgorithm())
+	fmt.Fprintln(env.stdout, "head:", obj.Head())
+	fmt.Fprintln(env.stdout, "OCFL version:", obj.Spec())
+	fmt.Fprintln(env.stdout, "inventory.json", obj.DigestAlgorithm().ID()+":", obj.InventoryDigest())
 	return nil
 }

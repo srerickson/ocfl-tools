@@ -44,16 +44,16 @@ type NewStageCmd struct {
 	ID  string `name:"id" short:"i" required:"" help:"object id for the new stage"`
 }
 
-func (cmd *NewStageCmd) Run(g *globals) error {
+func (cmd *NewStageCmd) Run(ctx context.Context, env *cmdEnv) error {
 	if _, err := stage.ReadStageFile(cmd.File); err == nil {
 		err := fmt.Errorf("stage file already exists: %s", cmd.File)
 		return err
 	}
-	root, err := g.getRoot()
+	root, err := env.getRoot(ctx)
 	if err != nil {
 		return err
 	}
-	obj, err := root.NewObject(g.ctx, cmd.ID)
+	obj, err := root.NewObject(ctx, cmd.ID)
 	if err != nil {
 		return err
 	}
@@ -64,7 +64,7 @@ func (cmd *NewStageCmd) Run(g *globals) error {
 	if err := stage.Write(cmd.File); err != nil {
 		return err
 	}
-	g.logger.Info("stage file created", "path", cmd.File, "object_id", stage.ID, "object_version", stage.NextHead)
+	env.logger.Info("stage file created", "path", cmd.File, "object_id", stage.ID, "object_version", stage.NextHead)
 	return nil
 }
 
@@ -78,13 +78,12 @@ type StageAddCmd struct {
 	Path     string `arg:"" help:"file or parent directory for content to add to the stage"`
 }
 
-func (cmd *StageAddCmd) Run(g *globals) error {
-	ctx := g.ctx
+func (cmd *StageAddCmd) Run(ctx context.Context, env *cmdEnv) error {
 	changes, err := stage.ReadStageFile(cmd.File)
 	if err != nil {
 		return err
 	}
-	changes.SetLogger(g.logger)
+	changes.SetLogger(env.logger)
 	absPath, err := filepath.Abs(cmd.Path)
 	if err != nil {
 		return err
@@ -126,13 +125,12 @@ func (cmd *StageAddCmd) Run(g *globals) error {
 type StageCommitCmd struct {
 	stageCmdBase
 	Message string `name:"message" short:"m" help:"Message to include in the object version metadata"`
-	Name    string `name:"name" short:"n" help:"Username to include in the object version metadata ($$${env_user_name})"`
-	Email   string `name:"email" short:"e" help:"User email to include in the object version metadata ($$${env_user_email})"`
+	Name    string `name:"name" short:"n" ocflenv:"OCFL_USER_NAME" help:"Username to include in the object version metadata"`
+	Email   string `name:"email" short:"e" ocflenv:"OCFL_USER_EMAIL" help:"User email to include in the object version metadata"`
 }
 
-func (cmd *StageCommitCmd) Run(g *globals) error {
-	ctx := g.ctx
-	root, err := g.getRoot()
+func (cmd *StageCommitCmd) Run(ctx context.Context, env *cmdEnv) error {
+	root, err := env.getRoot(ctx)
 	if err != nil {
 		return err
 	}
@@ -140,15 +138,9 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 	if err != nil {
 		return err
 	}
-	obj, err := root.NewObject(g.ctx, stageFile.ID)
+	obj, err := root.NewObject(ctx, stageFile.ID)
 	if err != nil {
 		return err
-	}
-	if cmd.Name == "" {
-		cmd.Name = g.getenv(envVarUserName)
-	}
-	if cmd.Email == "" {
-		cmd.Email = g.getenv(envVarUserEmail)
 	}
 	stage, err := stageFile.Stage()
 	if err != nil {
@@ -160,12 +152,12 @@ func (cmd *StageCommitCmd) Run(g *globals) error {
 		stage,
 		cmd.Message,
 		newUser(cmd.Name, cmd.Email),
-		g.logger)
+		env.logger)
 	if err != nil {
 		return err
 	}
 	if updated {
-		g.logger.Info("removing stage file", "path", cmd.File)
+		env.logger.Info("removing stage file", "path", cmd.File)
 		if err := os.Remove(cmd.File); err != nil {
 			return fmt.Errorf("removing stage file: %w", err)
 		}
@@ -179,14 +171,13 @@ type StageDiffCmd struct {
 	Dir string `name:"dir" help:"use a local directory rather than upstream object as basis for comparison to the stage."`
 }
 
-func (cmd *StageDiffCmd) Run(g *globals) error {
-	ctx := g.ctx
+func (cmd *StageDiffCmd) Run(ctx context.Context, env *cmdEnv) error {
 	baseState := ocfl.PathMap{}
 	stageFile, err := stage.ReadStageFile(cmd.File)
 	if err != nil {
 		return err
 	}
-	stageFile.SetLogger(g.logger)
+	stageFile.SetLogger(env.logger)
 	stageState := stageFile.NextState
 	switch {
 	case cmd.Dir != "":
@@ -206,7 +197,7 @@ func (cmd *StageDiffCmd) Run(g *globals) error {
 			return err
 		}
 	default:
-		root, err := g.getRoot()
+		root, err := env.getRoot(ctx)
 		if err != nil {
 			return err
 		}
@@ -226,7 +217,7 @@ func (cmd *StageDiffCmd) Run(g *globals) error {
 	if diffs.Empty() {
 		return nil
 	}
-	fmt.Fprint(g.stdout, diffs.String())
+	fmt.Fprint(env.stdout, diffs.String())
 	return nil
 }
 
@@ -236,13 +227,13 @@ type StageListCmd struct {
 	WithDigests bool `name:"digests" short:"d" help:"include file digests in output"`
 }
 
-func (cmd *StageListCmd) Run(g *globals) error {
+func (cmd *StageListCmd) Run(ctx context.Context, env *cmdEnv) error {
 	stage, err := stage.ReadStageFile(cmd.File)
 	if err != nil {
 		return err
 	}
-	stage.SetLogger(g.logger)
-	stage.List(g.stdout, cmd.WithDigests)
+	stage.SetLogger(env.logger)
+	stage.List(env.stdout, cmd.WithDigests)
 	return nil
 }
 
@@ -253,12 +244,12 @@ type StageRmCmd struct {
 	Path      string `arg:"" name:"path" help:"file or directory to remove"`
 }
 
-func (cmd *StageRmCmd) Run(g *globals) error {
+func (cmd *StageRmCmd) Run(ctx context.Context, env *cmdEnv) error {
 	stage, err := stage.ReadStageFile(cmd.File)
 	if err != nil {
 		return err
 	}
-	stage.SetLogger(g.logger)
+	stage.SetLogger(env.logger)
 	if err := stage.Remove(cmd.Path, cmd.Recursive); err != nil {
 		return err
 	}
@@ -273,18 +264,17 @@ type StageStatusCmd struct {
 	stageCmdBase
 }
 
-func (cmd *StageStatusCmd) Run(g *globals) error {
-	ctx := g.ctx
+func (cmd *StageStatusCmd) Run(ctx context.Context, env *cmdEnv) error {
 	stageFile, err := stage.ReadStageFile(cmd.File)
 	if err != nil {
 		return err
 	}
-	stageFile.SetLogger(g.logger)
-	fmt.Fprintf(g.stdout, "object:      %s (%s)\n", stageFile.ID, stageFile.NextHead)
-	fmt.Fprintf(g.stdout, "digest alg:  %s\n", stageFile.AlgID)
-	fmt.Fprintf(g.stdout, "fixity algs: %s\n", stageFile.FixityIDs)
-	fmt.Fprintf(g.stdout, "state size:  %d files\n", len(stageFile.NextState))
-	root, err := g.getRoot()
+	stageFile.SetLogger(env.logger)
+	fmt.Fprintf(env.stdout, "object:      %s (%s)\n", stageFile.ID, stageFile.NextHead)
+	fmt.Fprintf(env.stdout, "digest alg:  %s\n", stageFile.AlgID)
+	fmt.Fprintf(env.stdout, "fixity algs: %s\n", stageFile.FixityIDs)
+	fmt.Fprintf(env.stdout, "state size:  %d files\n", len(stageFile.NextState))
+	root, err := env.getRoot(ctx)
 	if err != nil {
 		return err
 	}
@@ -302,19 +292,19 @@ func (cmd *StageStatusCmd) Run(g *globals) error {
 	}
 	switch {
 	case !stateDiff.Empty():
-		fmt.Fprintln(g.stdout, "stage has changes to commit")
+		fmt.Fprintln(env.stdout, "stage has changes to commit")
 	default:
-		fmt.Fprintln(g.stdout, "stage is unchanged and/or empty")
+		fmt.Fprintln(env.stdout, "stage is unchanged and/or empty")
 	}
 	hasErrors := false
 	// check stage content
 	for err := range stageFile.ContentErrors() {
 		hasErrors = true
-		g.logger.Error(err.Error())
+		env.logger.Error(err.Error())
 	}
 	for err := range stageFile.StateErrors() {
 		hasErrors = true
-		g.logger.Error(err.Error())
+		env.logger.Error(err.Error())
 	}
 	if hasErrors {
 		return errors.New("stage has errors")

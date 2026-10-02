@@ -1,6 +1,7 @@
 package run
 
 import (
+	"context"
 	"fmt"
 	"runtime/debug"
 )
@@ -13,7 +14,7 @@ var (
 
 type VersionCmd struct{}
 
-func (cmd *VersionCmd) Run(g *globals) error {
+func (cmd *VersionCmd) Run(ctx context.Context, env *cmdEnv) error {
 	codeRev := func() string {
 		if info, ok := debug.ReadBuildInfo(); ok {
 			revision := ""
@@ -33,12 +34,12 @@ func (cmd *VersionCmd) Run(g *globals) error {
 		return ""
 	}
 
-	fmt.Fprintln(g.stdout, "ocfl-tools: v"+Version)
+	fmt.Fprintln(env.stdout, "ocfl-tools: v"+Version)
 	if BuildTime != "" {
-		fmt.Fprintln(g.stdout, "date:", BuildTime)
+		fmt.Fprintln(env.stdout, "date:", BuildTime)
 	}
 	if rev := codeRev(); rev != "" {
-		fmt.Fprintln(g.stdout, "commit:", rev[:8])
+		fmt.Fprintln(env.stdout, "commit:", rev[:8])
 	}
 	return nil
 }

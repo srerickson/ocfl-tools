@@ -137,3 +137,17 @@ func TestFileURL(t *testing.T) {
 		be.In(t, "first commit", stdout)
 	})
 }
+
+// TestFlagOverridesEnv checks that flags take precedence over the environment
+// variables that set their defaults.
+func TestFlagOverridesEnv(t *testing.T) {
+	_, fixtures := testutil.TempDirTestData(t,
+		`testdata/store-fixtures/1.0/good-stores/reg-extension-dir-root`,
+	)
+	rootPath := fixtures[0]
+	env := map[string]string{"OCFL_ROOT": filepath.Join(t.TempDir(), "missing")}
+	testutil.RunCLI([]string{"info", "--root", rootPath}, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+		be.In(t, "storage root: "+fileURL(rootPath)+"\n", stdout)
+	})
+}
