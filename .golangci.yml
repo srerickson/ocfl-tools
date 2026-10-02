@@ -1,0 +1,7 @@
+version: "2"
+linters:
+  exclusions:
+    presets:
+      # skip unchecked errors that are conventionally ignored, such as the
+      # results of fmt.Fprint* writes to stdout or stderr.
+      - std-error-handling

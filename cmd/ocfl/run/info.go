@@ -20,7 +20,7 @@ func (cmd *InfoCmd) Run(ctx context.Context, env *cmdEnv) error {
 		printRootInfo(root, env.stdout, env.logger)
 		return nil
 	}
-	obj, err := cmd.objectFlags.open(ctx, env, ocfl.ObjectMustExist())
+	obj, err := cmd.open(ctx, env, ocfl.ObjectMustExist())
 	if err != nil {
 		return err
 	}

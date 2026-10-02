@@ -71,7 +71,7 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		fmt.Fprintln(stderr, err.Error())
 		var parseErr *kong.ParseError
 		if errors.As(err, &parseErr) {
-			parseErr.Context.PrintUsage(true)
+			_ = parseErr.Context.PrintUsage(true) // best effort: err is already printed
 		}
 		return err
 	}

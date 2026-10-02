@@ -28,7 +28,7 @@ func (cmd *LsCmd) Run(ctx context.Context, env *cmdEnv) error {
 		}
 		return nil
 	}
-	obj, err := cmd.objectFlags.open(ctx, env, ocfl.ObjectMustExist())
+	obj, err := cmd.open(ctx, env, ocfl.ObjectMustExist())
 	if err != nil {
 		return err
 	}
