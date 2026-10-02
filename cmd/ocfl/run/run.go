@@ -63,7 +63,7 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		fmt.Fprintln(stderr, "in kong configuration:", err.Error())
 		return err
 	}
-	kongCtx, err := parse(parser, args[1:])
+	kongCtx, err := parseKongArgs(parser, args[1:])
 	if err != nil {
 		if errors.Is(err, errHelp) {
 			return nil
@@ -88,16 +88,34 @@ func CLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	return nil
 }
 
+// cli defines the command line: global flags and the commands.
+type cli struct {
+	RootLocation string `name:"root" ocflenv:"OCFL_ROOT" help:"The prefix/directory of the OCFL storage root used for the command"`
+	Debug        bool   `name:"debug" help:"enable debug log messages"`
+
+	Commit   CommitCmd   `cmd:"" help:"Create or update an object using contents of a local directory"`
+	Diff     DiffCmd     `cmd:"" help:"Show changed files between versions of an object"`
+	Delete   DeleteCmd   `cmd:"" help:"Delete an object in the storage root"`
+	Export   ExportCmd   `cmd:"" help:"Export object contents to the local filesystem"`
+	Info     InfoCmd     `cmd:"" help:"Show information about an object or the active storage root"`
+	InitRoot InitRootCmd `cmd:"" help:"Create a new OCFL storage root"`
+	Log      LogCmd      `cmd:"" help:"Show an object's revision log"`
+	Ls       LsCmd       `cmd:"" help:"List objects in a storage root or files in an object"`
+	Stage    StageCmd    `cmd:"" help:"commands for working with stages (i.e., object updates)"`
+	Validate ValidateCmd `cmd:"" help:"Validate an object or all objects in the storage root"`
+	Version  VersionCmd  `cmd:"" help:"Print ocfl-tools version information"`
+}
+
+// errHelp is returned by parseKongArgs if the arguments asked for help, which
+// has been printed.
+var errHelp = errors.New("help requested")
+
 // kongExit is the panic value used by the parser's exit function.
 type kongExit int
 
-// errHelp is returned by parse if the arguments asked for help, which has
-// been printed.
-var errHelp = errors.New("help requested")
-
-// parse parses args with parser, converting a call to the parser's exit
+// parseKongArgs parses args with parser, converting a call to the parser's exit
 // function into an error.
-func parse(parser *kong.Kong, args []string) (kongCtx *kong.Context, err error) {
+func parseKongArgs(parser *kong.Kong, args []string) (kongCtx *kong.Context, err error) {
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -142,23 +160,6 @@ func envHelpFormatter(value *kong.Value) string {
 		return value.Help
 	}
 	return value.Help + " ($" + name + ")"
-}
-
-type cli struct {
-	RootLocation string `name:"root" ocflenv:"OCFL_ROOT" help:"The prefix/directory of the OCFL storage root used for the command"`
-	Debug        bool   `name:"debug" help:"enable debug log messages"`
-
-	Commit   CommitCmd   `cmd:"" help:"Create or update an object using contents of a local directory"`
-	Diff     DiffCmd     `cmd:"" help:"Show changed files between versions of an object"`
-	Delete   DeleteCmd   `cmd:"" help:"Delete an object in the storage root"`
-	Export   ExportCmd   `cmd:"" help:"Export object contents to the local filesystem"`
-	Info     InfoCmd     `cmd:"" help:"Show information about an object or the active storage root"`
-	InitRoot InitRootCmd `cmd:"" help:"Create a new OCFL storage root"`
-	Log      LogCmd      `cmd:"" help:"Show an object's revision log"`
-	Ls       LsCmd       `cmd:"" help:"List objects in a storage root or files in an object"`
-	Stage    StageCmd    `cmd:"" help:"commands for working with stages (i.e., object updates)"`
-	Validate ValidateCmd `cmd:"" help:"Validate an object or all objects in the storage root"`
-	Version  VersionCmd  `cmd:"" help:"Print ocfl-tools version information"`
 }
 
 // cmdEnv is what commands use to interact with their environment: standard
@@ -225,6 +226,19 @@ func (env *cmdEnv) withS3Defaults(loc string) (string, error) {
 	return u.String(), nil
 }
 
+func (env *cmdEnv) getRoot(ctx context.Context) (*ocfl.Root, error) {
+	fsys, dir, err := env.parseLocation(ctx, env.rootLocation)
+	if err != nil {
+		return nil, err
+	}
+	root, err := ocfl.NewRoot(ctx, fsys, dir)
+	if err != nil {
+		rootcnf := locationString(fsys, dir)
+		return nil, fmt.Errorf("reading OCFL storage root %s: %w", rootcnf, err)
+	}
+	return root, nil
+}
+
 // addCloser registers c to be closed by closeAll.
 func (env *cmdEnv) addCloser(c io.Closer) {
 	env.closeMu.Lock()
@@ -243,6 +257,42 @@ func (env *cmdEnv) closeAll() {
 			env.logger.Warn("closing storage backend", "err", err.Error())
 		}
 	}
+}
+
+// objectFlags are flags for commands that use an existing object, which can be
+// named by its ID in the storage root or by its location.
+type objectFlags struct {
+	ID      string `name:"id" short:"i" help:"The ID of an object in the storage root"`
+	ObjPath string `name:"object" help:"full path to object root. If set, --root and --id are ignored."`
+}
+
+// open returns the object named by the flags: the object with --id in the
+// storage root if it's set, otherwise the object at --object.
+func (f objectFlags) open(ctx context.Context, env *cmdEnv, opts ...ocfl.ObjectOption) (*ocfl.Object, error) {
+	if f.ID == "" && f.ObjPath == "" {
+		err := errors.New("must provide an object ID or an object path")
+		return nil, err
+	}
+	if f.ID == "" {
+		fsys, dir, err := env.parseLocation(ctx, f.ObjPath)
+		if err != nil {
+			return nil, err
+		}
+		obj, err := ocfl.NewObject(ctx, fsys, dir, opts...)
+		if err != nil {
+			return nil, fmt.Errorf("reading object at path: %q: %w", f.ObjPath, err)
+		}
+		return obj, nil
+	}
+	root, err := env.getRoot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := root.NewObject(ctx, f.ID, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("reading object id: %q: %w", f.ID, err)
+	}
+	return obj, nil
 }
 
 // mkLocalDir creates the directory for loc if loc is a local path or a file
@@ -292,55 +342,6 @@ func mkLocalDir(loc string) (undo func(), err error) {
 			}
 		}
 	}, nil
-}
-
-func (env *cmdEnv) getRoot(ctx context.Context) (*ocfl.Root, error) {
-	fsys, dir, err := env.parseLocation(ctx, env.rootLocation)
-	if err != nil {
-		return nil, err
-	}
-	root, err := ocfl.NewRoot(ctx, fsys, dir)
-	if err != nil {
-		rootcnf := locationString(fsys, dir)
-		return nil, fmt.Errorf("reading OCFL storage root %s: %w", rootcnf, err)
-	}
-	return root, nil
-}
-
-// objectFlags are flags for commands that use an existing object, which can be
-// named by its ID in the storage root or by its location.
-type objectFlags struct {
-	ID      string `name:"id" short:"i" help:"The ID of an object in the storage root"`
-	ObjPath string `name:"object" help:"full path to object root. If set, --root and --id are ignored."`
-}
-
-// open returns the object named by the flags: the object with --id in the
-// storage root if it's set, otherwise the object at --object.
-func (f objectFlags) open(ctx context.Context, env *cmdEnv, opts ...ocfl.ObjectOption) (*ocfl.Object, error) {
-	if f.ID == "" && f.ObjPath == "" {
-		err := errors.New("must provide an object ID or an object path")
-		return nil, err
-	}
-	if f.ID == "" {
-		fsys, dir, err := env.parseLocation(ctx, f.ObjPath)
-		if err != nil {
-			return nil, err
-		}
-		obj, err := ocfl.NewObject(ctx, fsys, dir, opts...)
-		if err != nil {
-			return nil, fmt.Errorf("reading object at path: %q: %w", f.ObjPath, err)
-		}
-		return obj, nil
-	}
-	root, err := env.getRoot(ctx)
-	if err != nil {
-		return nil, err
-	}
-	obj, err := root.NewObject(ctx, f.ID, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("reading object id: %q: %w", f.ID, err)
-	}
-	return obj, nil
 }
 
 // locationString returns the location string for dir in fsys. The result is a
