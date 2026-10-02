@@ -8,8 +8,7 @@ import (
 )
 
 type InfoCmd struct {
-	ID      string `name:"id" short:"i" optional:"" help:"The id for object to show information about"`
-	ObjPath string `name:"object" help:"full path to object root. If set, --root and --id are ignored."`
+	objectFlags
 }
 
 func (cmd *InfoCmd) Run(ctx context.Context, env *cmdEnv) error {
@@ -21,7 +20,7 @@ func (cmd *InfoCmd) Run(ctx context.Context, env *cmdEnv) error {
 		printRootInfo(root, env.stdout, env.logger)
 		return nil
 	}
-	obj, err := env.newObject(ctx, cmd.ID, cmd.ObjPath, ocfl.ObjectMustExist())
+	obj, err := cmd.objectFlags.open(ctx, env, ocfl.ObjectMustExist())
 	if err != nil {
 		return err
 	}

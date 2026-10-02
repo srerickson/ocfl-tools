@@ -15,8 +15,7 @@ import (
 )
 
 type ExportCmd struct {
-	ID       string   `name:"id" short:"i" help:"The ID for the object to export"`
-	ObjPath  string   `name:"object" help:"full path to object root. If set, --root and --id are ignored."`
+	objectFlags
 	Version  int      `name:"version" short:"v" default:"0" help:"The number (unpadded) of the object version from which to export content"`
 	Replace  bool     `name:"replace" help:"replace existing files with object contents"`
 	SrcDir   string   `name:"dir" short:"d" default:"." help:"An object directory to export. Defaults to the object's logical root. Ignored if --file is set."`
@@ -25,7 +24,7 @@ type ExportCmd struct {
 }
 
 func (cmd *ExportCmd) Run(ctx context.Context, env *cmdEnv) error {
-	obj, err := env.newObject(ctx, cmd.ID, cmd.ObjPath, ocfl.ObjectMustExist())
+	obj, err := cmd.objectFlags.open(ctx, env, ocfl.ObjectMustExist())
 	if err != nil {
 		return err
 	}
