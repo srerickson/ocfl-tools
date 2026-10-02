@@ -11,8 +11,6 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
-const deleteHelp = "Delete an object in the storage root"
-
 type DeleteCmd struct {
 	ID        string `name:"id" short:"i" help:"The ID for the object to delete" required:""`
 	NoConfirm bool   `name:"yes" short:"y" help:"skip delete confirmation."`

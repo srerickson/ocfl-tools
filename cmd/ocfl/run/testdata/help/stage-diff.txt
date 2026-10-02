@@ -9,5 +9,6 @@ Flags:
       --debug                     enable debug log messages
 
   -f, --file="ocfl-stage.json"    path to stage file
+
       --dir=STRING                use a local directory rather than upstream
                                   object as basis for comparison to the stage.

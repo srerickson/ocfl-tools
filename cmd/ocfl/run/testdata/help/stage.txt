@@ -2,11 +2,23 @@ Usage: ocfl stage <command> [flags]
 
 commands for working with stages (i.e., object updates)
 
+A stage file records changes to an object that can be committed as a new
+version. Create one with 'stage new', change it with 'stage add' and 'stage rm',
+and commit it with 'stage commit', which removes the stage file. Staged content
+is digested when it's added, but it isn't copied until the stage is committed.
+
+    ocfl stage new --id my-object
+    ocfl stage add my-files/
+    ocfl stage rm old-file.txt
+    ocfl stage commit -m "update data" -n "My Name" -e me@example.net
+
 Flags:
-  -h, --help           Show context-sensitive help.
-      --root=STRING    The prefix/directory of the OCFL storage root used for
-                       the command ($OCFL_ROOT)
-      --debug          enable debug log messages
+  -h, --help                      Show context-sensitive help.
+      --root=STRING               The prefix/directory of the OCFL storage root
+                                  used for the command ($OCFL_ROOT)
+      --debug                     enable debug log messages
+
+  -f, --file="ocfl-stage.json"    path to stage file
 
 Commands:
   stage add       Add a file or directory to the stage

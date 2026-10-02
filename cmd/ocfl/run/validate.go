@@ -9,8 +9,6 @@ import (
 	"github.com/srerickson/ocfl-go"
 )
 
-const validateHelp = "Validate an object or all objects in the storage root"
-
 type ValidateCmd struct {
 	ID         string `name:"id" short:"i" optional:"" help:"The id of object to validate"`
 	ObjPath    string `name:"object" help:"full path to object root. If set, --root and --id are ignored."`

@@ -50,6 +50,12 @@ func TestStage_Example(t *testing.T) {
 		expect := "new-stuff/.hidden_dir/note.txt\nnew-stuff/.hidden_file\nnew-stuff/file2.txt\nnew-stuff/sculpture-stone-face-head-888027.jpg\n"
 		be.Equal(t, expect, stdout) // stdout has four items (including hidden)
 	})
+	// --file can also come before the subcommand
+	cmd = []string{"stage", "-f", stagePath, "ls"}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+		be.In(t, "new-stuff/file2.txt\n", stdout)
+	})
 	// commit stage
 	cmd = []string{"stage", "commit", "--file", stagePath, "-m", "first commit", "-n", name, "-e", email}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
