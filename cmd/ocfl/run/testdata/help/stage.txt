@@ -1,0 +1,19 @@
+Usage: ocfl stage <command> [flags]
+
+commands for working with stages (i.e., object updates)
+
+Flags:
+  -h, --help           Show context-sensitive help.
+      --root=STRING    The prefix/directory of the OCFL storage root used for
+                       the command ($OCFL_ROOT)
+      --debug          enable debug log messages
+
+Commands:
+  stage add       Add a file or directory to the stage
+  stage commit    Commit the stage as a new object version
+  stage diff      Show changes between an upstream object or directory and the
+                  stage
+  stage ls        List files in the stage state
+  stage new       Create a new stage for preparing updates to an object
+  stage rm        Remove a file or directory from the stage
+  stage status    Show stage details and report any errors

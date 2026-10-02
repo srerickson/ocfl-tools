@@ -1,0 +1,14 @@
+Usage: ocfl diff [flags]
+
+Show changed files between versions of an object
+
+Flags:
+  -h, --help                 Show context-sensitive help.
+      --root=STRING          The prefix/directory of the OCFL storage root used
+                             for the command ($OCFL_ROOT)
+      --debug                enable debug log messages
+
+  -i, --id=STRING            The id for object to diff
+  -v, --versions=-1,0,...    Object versions to compare, separated by commas.
+                             0 refers to HEAD, negative numbers match versions
+                             before HEAD.

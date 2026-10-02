@@ -1,0 +1,13 @@
+Usage: ocfl info [flags]
+
+Show information about an object or the active storage root
+
+Flags:
+  -h, --help             Show context-sensitive help.
+      --root=STRING      The prefix/directory of the OCFL storage root used for
+                         the command ($OCFL_ROOT)
+      --debug            enable debug log messages
+
+  -i, --id=STRING        The id for object to show information about
+      --object=STRING    full path to object root. If set, --root and --id are
+                         ignored.

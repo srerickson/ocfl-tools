@@ -1,0 +1,23 @@
+Usage: ocfl stage add <path> [flags]
+
+Add a file or directory to the stage
+
+Arguments:
+  <path>    file or parent directory for content to add to the stage
+
+Flags:
+  -h, --help                      Show context-sensitive help.
+      --root=STRING               The prefix/directory of the OCFL storage root
+                                  used for the command ($OCFL_ROOT)
+      --debug                     enable debug log messages
+
+  -f, --file="ocfl-stage.json"    path to stage file
+      --no-hidden                 exclude hidden files and directories (.*).
+                                  Ignored if path is a file.
+      --as=STRING                 logical name for the new content. Default:
+                                  base name if path is a file; '.' if path is a
+                                  directory.
+  -j, --jobs=0                    number of files to digest concurrently.
+                                  Defaults to the number of CPU cores.
+      --remove                    also remove staged files not found in the
+                                  path. Ignored if path is a file.
