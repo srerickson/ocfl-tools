@@ -419,7 +419,7 @@ func (s *StageFile) add(logical string, local *LocalFile, digests digest.Set) er
 	alreadyCommitted := slices.Contains(s.ExistingDigests, newDigest)
 	// digest is duplicate of previously staged files
 	_, alreadyStaged := s.LocalContent[newDigest]
-	if !(alreadyCommitted || alreadyStaged) {
+	if !alreadyCommitted && !alreadyStaged {
 		s.LocalContent[newDigest] = local
 	}
 	return nil

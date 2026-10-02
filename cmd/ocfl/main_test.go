@@ -52,7 +52,7 @@ func startHelper(t *testing.T, mode string) (*exec.Cmd, func(string)) {
 	stdout, err := cmd.StdoutPipe()
 	be.NilErr(t, err)
 	be.NilErr(t, cmd.Start())
-	t.Cleanup(func() { cmd.Process.Kill() })
+	t.Cleanup(func() { _ = cmd.Process.Kill() }) // fails if it already exited
 	lines := bufio.NewScanner(stdout)
 	expect := func(want string) {
 		t.Helper()
