@@ -8,7 +8,7 @@ Flags:
                          the command ($OCFL_ROOT)
       --debug            enable debug log messages
 
-  -i, --id=STRING        The id of object to list contents from.
+  -i, --id=STRING        The ID of an object in the storage root
       --object=STRING    full path to object root. If set, --root and --id are
                          ignored.
   -v, --version=0        The object version number (unpadded) to list contents

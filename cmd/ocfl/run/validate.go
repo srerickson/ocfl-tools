@@ -10,8 +10,7 @@ import (
 )
 
 type ValidateCmd struct {
-	ID         string `name:"id" short:"i" optional:"" help:"The id of object to validate"`
-	ObjPath    string `name:"object" help:"full path to object root. If set, --root and --id are ignored."`
+	objectFlags
 	SkipDigest bool   `name:"skip-digest" help:"skip digest (checksum) validation"`
 }
 

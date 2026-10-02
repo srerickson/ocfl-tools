@@ -307,21 +307,28 @@ func (env *cmdEnv) getRoot(ctx context.Context) (*ocfl.Root, error) {
 	return root, nil
 }
 
-// newObject using id (if set) or full object path. if mustExist is true
-// the object's existence is checked.
-func (env *cmdEnv) newObject(ctx context.Context, id, objPath string, opts ...ocfl.ObjectOption) (*ocfl.Object, error) {
-	if id == "" && objPath == "" {
+// objectFlags are flags for commands that use an existing object, which can be
+// named by its ID in the storage root or by its location.
+type objectFlags struct {
+	ID      string `name:"id" short:"i" help:"The ID of an object in the storage root"`
+	ObjPath string `name:"object" help:"full path to object root. If set, --root and --id are ignored."`
+}
+
+// open returns the object named by the flags: the object with --id in the
+// storage root if it's set, otherwise the object at --object.
+func (f objectFlags) open(ctx context.Context, env *cmdEnv, opts ...ocfl.ObjectOption) (*ocfl.Object, error) {
+	if f.ID == "" && f.ObjPath == "" {
 		err := errors.New("must provide an object ID or an object path")
 		return nil, err
 	}
-	if id == "" {
-		fsys, dir, err := env.parseLocation(ctx, objPath)
+	if f.ID == "" {
+		fsys, dir, err := env.parseLocation(ctx, f.ObjPath)
 		if err != nil {
 			return nil, err
 		}
 		obj, err := ocfl.NewObject(ctx, fsys, dir, opts...)
 		if err != nil {
-			return nil, fmt.Errorf("reading object at path: %q: %w", objPath, err)
+			return nil, fmt.Errorf("reading object at path: %q: %w", f.ObjPath, err)
 		}
 		return obj, nil
 	}
@@ -329,9 +336,9 @@ func (env *cmdEnv) newObject(ctx context.Context, id, objPath string, opts ...oc
 	if err != nil {
 		return nil, err
 	}
-	obj, err := root.NewObject(ctx, id, opts...)
+	obj, err := root.NewObject(ctx, f.ID, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("reading object id: %q: %w", id, err)
+		return nil, fmt.Errorf("reading object id: %q: %w", f.ID, err)
 	}
 	return obj, nil
 }
