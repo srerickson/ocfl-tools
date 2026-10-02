@@ -24,7 +24,7 @@ type ExportCmd struct {
 }
 
 func (cmd *ExportCmd) Run(ctx context.Context, env *cmdEnv) error {
-	obj, err := cmd.objectFlags.open(ctx, env, ocfl.ObjectMustExist())
+	obj, err := cmd.open(ctx, env, ocfl.ObjectMustExist())
 	if err != nil {
 		return err
 	}
