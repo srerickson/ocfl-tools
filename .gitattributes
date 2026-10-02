@@ -1,2 +1,1 @@
 cmd/ocfl/internal/testutil/testdata/** binary
-cmd/ocfl/run/testdata/** text eol=lf

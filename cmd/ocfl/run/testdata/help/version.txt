@@ -1,9 +1,0 @@
-Usage: ocfl version [flags]
-
-Print ocfl-tools version information
-
-Flags:
-  -h, --help           Show context-sensitive help.
-      --root=STRING    The prefix/directory of the OCFL storage root used for
-                       the command ($OCFL_ROOT)
-      --debug          enable debug log messages
