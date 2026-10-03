@@ -2,11 +2,11 @@ package diff
 
 import (
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"golang.org/x/exp/maps"
 )
 
 var (
@@ -16,6 +16,8 @@ var (
 	movStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 )
 
+// Result describes the changes between two sets of paths. Renamed maps
+// removed paths to added paths with the same digest.
 type Result struct {
 	Added    []string
 	Removed  []string
@@ -23,6 +25,8 @@ type Result struct {
 	Renamed  map[string]string
 }
 
+// Diff compares aPaths and bPaths, which map file paths to digests, and returns
+// the changes from a to b.
 func Diff(aPaths, bPaths map[string]string) (result Result, err error) {
 	addMap := map[string][]string{} // digest map of new files in b
 	rmMap := map[string][]string{}  // digest map of missing files in b
@@ -43,19 +47,19 @@ func Diff(aPaths, bPaths map[string]string) (result Result, err error) {
 			addMap[bDigest] = append(addMap[bDigest], bPath)
 		}
 	}
-	// build renames by finding matchine digests in added / removed
+	// build renames by finding matching digests in added / removed
 	renamed := map[string]string{}
 	for dig, addPaths := range addMap {
 		rmPaths := rmMap[dig]
-		sort.Strings(addPaths) // sort to make result deterministic
-		sort.Strings(rmPaths)
+		slices.Sort(addPaths) // sort to make result deterministic
+		slices.Sort(rmPaths)
 		switch {
 		case len(addPaths) > len(rmPaths):
 			// create a rename pair for each rmPath
 			for i, rmPath := range rmPaths {
 				renamed[rmPath] = addPaths[i]
 			}
-			// remaining paths are addded
+			// remaining paths are added
 			result.Added = append(result.Added, addPaths[len(rmPaths):]...)
 		default:
 			// len(addPaths) <= len(rmPaths)
@@ -76,12 +80,13 @@ func Diff(aPaths, bPaths map[string]string) (result Result, err error) {
 	if len(renamed) > 0 {
 		result.Renamed = renamed
 	}
-	sort.Strings(result.Added)
-	sort.Strings(result.Removed)
-	sort.Strings(result.Modified)
+	slices.Sort(result.Added)
+	slices.Sort(result.Removed)
+	slices.Sort(result.Modified)
 	return
 }
 
+// String returns the changes in r, one per line, for display in a terminal.
 func (r Result) String() string {
 	b := &strings.Builder{}
 	for _, n := range r.Added {
@@ -93,17 +98,16 @@ func (r Result) String() string {
 	for _, n := range r.Modified {
 		fmt.Fprintln(b, modStyle.Render("mod:"), n)
 	}
-	moved := maps.Keys(r.Renamed)
-	sort.Strings(moved)
-	for _, n := range moved {
+	for _, n := range slices.Sorted(maps.Keys(r.Renamed)) {
 		fmt.Fprintln(b, movStyle.Render("mov:"), "{", n, "=>", r.Renamed[n], "}")
 	}
 	return b.String()
 }
 
-func (diff Result) Empty() bool {
-	return len(diff.Added) == 0 &&
-		len(diff.Removed) == 0 &&
-		len(diff.Modified) == 0 &&
-		len(diff.Renamed) == 0
+// Empty reports whether r has no changes.
+func (r Result) Empty() bool {
+	return len(r.Added) == 0 &&
+		len(r.Removed) == 0 &&
+		len(r.Modified) == 0 &&
+		len(r.Renamed) == 0
 }
