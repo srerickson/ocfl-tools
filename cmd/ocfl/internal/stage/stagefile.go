@@ -24,8 +24,8 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
-// StageFile reprepresent a local stage file for building updates
-// to OCFL ojects.
+// StageFile represents a local stage file for building updates
+// to OCFL objects.
 type StageFile struct {
 	// Object ID
 	ID string `json:"object_id"`
@@ -84,11 +84,11 @@ func NewStageFile(obj *ocfl.Object, newAlg string) (*StageFile, error) {
 	return stage, nil
 }
 
+// ReadStageFile reads the stage file name.
 func ReadStageFile(name string) (*StageFile, error) {
 	var stage StageFile
 	bytes, err := os.ReadFile(name)
 	if err != nil {
-		// have you created
 		return nil, err
 	}
 	if err := json.Unmarshal(bytes, &stage); err != nil {
@@ -304,7 +304,7 @@ func (s StageFile) ContentErrors() iter.Seq[error] {
 	}
 }
 
-// Write s to file name as json
+// Write writes s to the file name as JSON.
 func (s StageFile) Write(name string) error {
 	stageBytes, err := json.Marshal(s)
 	if err != nil {
@@ -316,7 +316,7 @@ func (s StageFile) Write(name string) error {
 	return nil
 }
 
-// stage implements ocfl.ContentSource
+// GetContent implements ocfl.ContentSource.
 func (s StageFile) GetContent(digest string) (ocflfs.FS, string) {
 	localFile := s.LocalContent[digest]
 	if localFile == nil {
@@ -327,12 +327,13 @@ func (s StageFile) GetContent(digest string) (ocflfs.FS, string) {
 	return ocflfs.DirFS(dir), name
 }
 
-// stage implements ocfl.FixitySource
+// GetFixity implements ocfl.FixitySource.
 func (s StageFile) GetFixity(digest string) digest.Set {
 	return s.Fixity[digest]
 }
 
-// Write a list of filenames to the writer
+// List writes the logical paths in the stage state to w, one per line,
+// optionally preceded by their digests.
 func (s *StageFile) List(w io.Writer, withDigests bool) {
 	for p, digest := range s.NextState.SortedPaths() {
 		if withDigests {
@@ -365,6 +366,8 @@ func (s *StageFile) Remove(logicalPath string, recursive bool) error {
 	return nil
 }
 
+// Stage returns an [ocfl.Stage] for committing s, or an error if s has state
+// or content errors.
 func (s StageFile) Stage() (*ocfl.Stage, error) {
 	if err := errors.Join(slices.Collect(s.StateErrors())...); err != nil {
 		return nil, err
@@ -384,16 +387,17 @@ func (s StageFile) Stage() (*ocfl.Stage, error) {
 	}, nil
 }
 
+// SetLogger sets the logger used to report changes to the stage.
 func (s *StageFile) SetLogger(l *slog.Logger) {
 	s.logger = l
 }
 
-// Add adds a digestsed file to the stage as logical path.
+// add adds a digested file to the stage as logical path.
 func (s *StageFile) add(logical string, local *LocalFile, digests digest.Set) error {
 	prevDigest := s.NextState[logical]
 	newDigest := digests[s.AlgID]
 	if newDigest == "" {
-		return fmt.Errorf("mising %s for %s", s.AlgID, logical)
+		return fmt.Errorf("missing %s for %s", s.AlgID, logical)
 	}
 	if prevDigest != newDigest {
 		// logical path added for first time or updated.
@@ -425,6 +429,8 @@ func (s *StageFile) add(logical string, local *LocalFile, digests digest.Set) er
 	return nil
 }
 
+// LocalFile is a local file with staged content. Size and Modtime are used to
+// detect changes to the file after it was staged.
 type LocalFile struct {
 	Path    string    `json:"path"`
 	Size    int64     `json:"size"`
@@ -488,8 +494,8 @@ func AddDigestJobs(num int) AddOption {
 	}
 }
 
-// chek
-// return any keys in state that would conflict with newName
+// pathConflict returns a path in state that conflicts with newName because
+// one is a directory prefix of the other, or "" if there is none.
 func pathConflict(state ocfl.PathMap, newName string) string {
 	for name := range state {
 		if strings.HasPrefix(name, newName+"/") || strings.HasPrefix(newName, name+"/") {

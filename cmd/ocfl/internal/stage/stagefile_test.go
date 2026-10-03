@@ -227,7 +227,7 @@ func stageStateMachesDir(t *testing.T, s *stage.StageFile, dir string, withHidde
 // }
 
 func isHidden(n string) bool {
-	for _, part := range strings.Split(n, "/") {
+	for part := range strings.SplitSeq(n, "/") {
 		if strings.HasPrefix(part, ".") {
 			return true
 		}

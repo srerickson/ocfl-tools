@@ -81,11 +81,11 @@ func (cmd *ExportCmd) Run(ctx context.Context, env *cmdEnv) error {
 	if err != nil {
 		return err
 	}
-	// single match: we can can create/overwrite destination as file
+	// single match: we can create/overwrite destination as file
 	if (!exists || !isDir) && len(matches) == 1 {
 		return exportFile(versionFS, matches[0], cmd.Replace, nil, absTo)
 	}
-	// copy matching files into the desintation, which must be an existing directory
+	// copy matching files into the destination, which must be an existing directory
 	if !isDir {
 		err = errors.New("not an existing directory: " + absTo)
 		return err
@@ -113,7 +113,7 @@ func exportFile(srcFS fs.FS, srcName string, replace bool, stdout io.Writer, dst
 		_, err = io.Copy(stdout, f)
 		return
 	}
-	const FileMode, DirMode fs.FileMode = 0664, 0775
+	const fileMode, dirMode fs.FileMode = 0o664, 0o775
 	perm := os.O_WRONLY | os.O_CREATE
 	switch {
 	case replace:
@@ -126,10 +126,10 @@ func exportFile(srcFS fs.FS, srcName string, replace bool, stdout io.Writer, dst
 	writers := make([]io.Writer, len(dstNames))
 	for i, name := range dstNames {
 		var f *os.File
-		if err = os.MkdirAll(filepath.Dir(name), DirMode); err != nil {
+		if err = os.MkdirAll(filepath.Dir(name), dirMode); err != nil {
 			return
 		}
-		f, err = os.OpenFile(name, perm, FileMode)
+		f, err = os.OpenFile(name, perm, fileMode)
 		if err != nil {
 			return
 		}
@@ -147,7 +147,7 @@ func exportFile(srcFS fs.FS, srcName string, replace bool, stdout io.Writer, dst
 func stat(dir string) (exists bool, isDir bool, err error) {
 	info, err := os.Stat(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return false, false, nil
 		}
 		return false, false, err

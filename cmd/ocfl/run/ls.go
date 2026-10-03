@@ -34,8 +34,7 @@ func (cmd *LsCmd) Run(ctx context.Context, env *cmdEnv) error {
 	}
 	ver := obj.Version(cmd.Version)
 	if ver == nil {
-		err := fmt.Errorf("version %d not found in object %q", cmd.Version, cmd.ID)
-		return err
+		return fmt.Errorf("version %d not found in object %q", cmd.Version, obj.ID())
 	}
 	for path, digest := range ver.State().PathMap().SortedPaths() {
 		if cmd.WithDigests {

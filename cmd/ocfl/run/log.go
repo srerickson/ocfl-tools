@@ -29,5 +29,4 @@ func (cmd *LogCmd) Run(ctx context.Context, env *cmdEnv) error {
 		fmt.Fprintln(env.stdout, "")
 	}
 	return nil
-
 }
