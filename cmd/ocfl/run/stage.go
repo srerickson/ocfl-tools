@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 
@@ -316,14 +315,14 @@ func (cmd *StageStatusCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCm
 }
 
 func newUser(name string, email string) ocfl.User {
-	if email != "" && !strings.HasPrefix(`email:`, email) {
+	if email != "" && !strings.HasPrefix(email, "email:") {
 		email = "email:" + email
 	}
 	return ocfl.User{Name: name, Address: email}
 }
 
 // objectUpdateOrRevert does an object update, reverting partial updates if
-// os.Interupt is received. The returned bool indicates if the update completed
+// ctx is canceled. The returned bool indicates if the update completed
 // without being interrupted.
 func objectUpdateOrRevert(
 	ctx context.Context,
@@ -334,15 +333,14 @@ func objectUpdateOrRevert(
 	logger *slog.Logger,
 	opts ...ocfl.ObjectUpdateOption,
 ) (bool, error) {
-	updateCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
-	defer stop()
 	logger.Info("starting object update", "object_id", obj.ID())
 	opts = append(opts, ocfl.UpdateWithLogger(logger))
-	update, err := obj.Update(updateCtx, stage, msg, user, opts...)
+	update, err := obj.Update(ctx, stage, msg, user, opts...)
 	if err != nil {
 		if errors.Is(err, context.Canceled) && update != nil {
 			logger.Info("object update interrupted: reverting to last valid state")
-			err = update.Revert(ctx, obj.FS(), obj.Path(), stage.ContentSource)
+			// ctx is already canceled: revert regardless.
+			err = update.Revert(context.WithoutCancel(ctx), obj.FS(), obj.Path(), stage.ContentSource)
 			if err != nil {
 				return false, fmt.Errorf("while reverting object update: %w", err)
 			}

@@ -86,9 +86,15 @@ func TestStage_Example(t *testing.T) {
 		be.NilErr(t, err)
 	})
 	// commit stage
-	cmd = []string{"stage", "commit", "--file", stagePath, "-m", "commit 2", "-n", name, "-e", email}
+	// an email that already has the "email:" prefix is used as-is
+	cmd = []string{"stage", "commit", "--file", stagePath, "-m", "commit 2", "-n", name, "-e", "email:" + email}
 	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 		be.NilErr(t, err)
+	})
+	cmd = []string{"log", "--id", objID}
+	testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+		be.Equal(t, 2, strings.Count(stdout, "<email:"+email+">"))
 	})
 	// check content for v2
 	cmd = []string{"ls", "--version", "2", "--id", objID}
