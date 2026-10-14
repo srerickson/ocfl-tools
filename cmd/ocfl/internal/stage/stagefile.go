@@ -279,11 +279,16 @@ func (s StageFile) StateErrors() iter.Seq[error] {
 }
 
 // ContentErrors returns an iterator that yields non-nil errors for local files
-// referenced in the stage that are either no longer readable or have changed
-// size or modtime.
+// referenced in the stage state that are either no longer readable or have
+// changed size or modtime. Local files for content that is no longer in the
+// stage state (because it was removed or replaced) are ignored.
 func (s StageFile) ContentErrors() iter.Seq[error] {
 	return func(yield func(error) bool) {
-		for _, file := range s.LocalContent {
+		for digest := range s.NextState.DigestMap() {
+			file := s.LocalContent[digest]
+			if file == nil {
+				continue // missing content is reported by StateErrors
+			}
 			name := file.Path
 			info, err := os.Stat(name)
 			if err != nil {
@@ -419,11 +424,11 @@ func (s *StageFile) add(logical string, local *LocalFile, digests digest.Set) er
 		delete(digests, s.AlgID)
 		s.Fixity[newDigest] = digests
 	}
-	// digest is duplicate of previously added content.
-	alreadyCommitted := slices.Contains(s.ExistingDigests, newDigest)
-	// digest is duplicate of previously staged files
-	_, alreadyStaged := s.LocalContent[newDigest]
-	if !alreadyCommitted && !alreadyStaged {
+	// content that is already part of the object doesn't need a local source.
+	// Otherwise, local is the source for the content, replacing any previously
+	// staged file with the same digest: local was just digested, while the
+	// previous file may have changed since it was staged.
+	if !slices.Contains(s.ExistingDigests, newDigest) {
 		s.LocalContent[newDigest] = local
 	}
 	return nil

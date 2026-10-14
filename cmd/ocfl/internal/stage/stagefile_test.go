@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
@@ -187,6 +188,58 @@ func TestStageFile_ContentErrors(t *testing.T) {
 			count++
 		}
 		be.Equal(t, 2, count)
+	})
+
+	t.Run("file changed and re-added", func(t *testing.T) {
+		// a staged file is modified and the directory is staged again: the
+		// stage should only reference the new content.
+		_, fixtures := testutil.TempDirTestData(t, "testdata/content-fixture")
+		contentFixture := fixtures[0]
+		changes, err := stage.NewStageFile(newObj, "sha512")
+		be.NilErr(t, err)
+		be.NilErr(t, changes.AddDir(ctx, contentFixture))
+		name := filepath.Join(contentFixture, "hello.csv")
+		be.NilErr(t, os.WriteFile(name, []byte("new content"), 0644))
+		be.NilErr(t, changes.AddDir(ctx, contentFixture))
+		be.NilErr(t, stageErrors(changes))
+		// same, with AddFile
+		be.NilErr(t, os.WriteFile(name, []byte("newer content"), 0644))
+		be.NilErr(t, changes.AddFile(name))
+		be.NilErr(t, stageErrors(changes))
+		// modtime changed but content is the same
+		later := time.Now().Add(time.Hour)
+		be.NilErr(t, os.Chtimes(name, later, later))
+		be.NilErr(t, changes.AddDir(ctx, contentFixture))
+		be.NilErr(t, stageErrors(changes))
+	})
+
+	t.Run("file removed from stage and deleted", func(t *testing.T) {
+		// content for files removed from the stage isn't needed.
+		_, fixtures := testutil.TempDirTestData(t, "testdata/content-fixture")
+		contentFixture := fixtures[0]
+		changes, err := stage.NewStageFile(newObj, "sha512")
+		be.NilErr(t, err)
+		be.NilErr(t, changes.AddDir(ctx, contentFixture))
+		be.NilErr(t, changes.Remove("hello.csv", false))
+		be.NilErr(t, os.Remove(filepath.Join(contentFixture, "hello.csv")))
+		be.NilErr(t, stageErrors(changes))
+	})
+
+	t.Run("duplicate file changed and re-added", func(t *testing.T) {
+		// folder1/file.txt and folder1/folder2/file2.txt have the same
+		// content. Changing either and re-adding the directory shouldn't
+		// cause errors: the other is still a valid source for the content.
+		for _, dup := range []string{"folder1/file.txt", "folder1/folder2/file2.txt"} {
+			_, fixtures := testutil.TempDirTestData(t, "testdata/content-fixture")
+			contentFixture := fixtures[0]
+			changes, err := stage.NewStageFile(newObj, "sha512")
+			be.NilErr(t, err)
+			be.NilErr(t, changes.AddDir(ctx, contentFixture))
+			name := filepath.Join(contentFixture, filepath.FromSlash(dup))
+			be.NilErr(t, os.WriteFile(name, []byte("new content"), 0644))
+			be.NilErr(t, changes.AddDir(ctx, contentFixture))
+			be.NilErr(t, stageErrors(changes))
+		}
 	})
 }
 
