@@ -194,6 +194,25 @@ only the size, modification time (in whole seconds), and mode:
 ocfl stage --check-stat=minimal status
 ```
 
+### Interrupted commits
+
+`ocfl commit` and `ocfl stage commit` save the new version in a stage file
+before they change the object. If a commit is interrupted (for example, with
+Ctrl-C) or fails, the object may be partially updated. The command exits with
+an error, keeps the stage file, and prints the commands to finish or undo the
+commit:
+
+```sh
+# resume the commit: repeat the same 'stage commit' command
+ocfl stage commit -f ocfl-stage.json
+
+# or undo the partial update, returning the stage to its uncommitted state
+ocfl stage commit -f ocfl-stage.json --revert
+```
+
+`ocfl commit` keeps its stage file in the temporary directory; the error
+message gives its path.
+
 ## Development
 
 ### Testing with S3
