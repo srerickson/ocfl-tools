@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,10 +14,12 @@ import (
 
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/diff"
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/stage"
+	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/statcache"
 )
 
 type StageCmd struct {
-	File string `name:"file" short:"f" default:"ocfl-stage.json" help:"path to stage file"`
+	File      string `name:"file" short:"f" default:"ocfl-stage.json" help:"path to stage file"`
+	CheckStat string `name:"check-stat" enum:"default,minimal" default:"default" ocflenv:"OCFL_CHECK_STAT" help:"file metadata compared to find staged files that haven't changed: 'default' or 'minimal' (size, mtime in seconds, and mode; for network file systems)"`
 
 	Add    StageAddCmd    `cmd:"" help:"Add a file or directory to the stage"`
 	Commit StageCommitCmd `cmd:"" help:"Commit the stage as a new object version"`
@@ -39,17 +40,26 @@ committed.
     ocfl stage new --id my-object
     ocfl stage add my-files/
     ocfl stage rm old-file.txt
-    ocfl stage commit -m "update data" -n "My Name" -e me@example.net`
+    ocfl stage commit -m "update data" -n "My Name" -e me@example.net
+
+The stage file records each staged file's metadata (size, modification
+time, inode, and so on), like git's index. 'stage status' and 'stage add'
+only read staged files whose metadata has changed. On network file systems
+(SMB/CIFS, NFS), where the inode and change time aren't stable, use
+--check-stat=minimal to compare only the size, modification time in whole
+seconds, and mode.`
 }
 
 // readFile reads the stage file named by the --file flag.
-func (cmd *StageCmd) readFile(env *cmdEnv) (*stage.StageFile, error) {
-	stageFile, err := stage.ReadStageFile(cmd.File)
+func (cmd *StageCmd) readFile() (*stage.Stage, error) {
+	s, err := stage.Read(cmd.File)
 	if err != nil {
 		return nil, err
 	}
-	stageFile.SetLogger(env.logger)
-	return stageFile, nil
+	if cmd.CheckStat == "minimal" {
+		s.Compare = statcache.CompareMinimal
+	}
+	return s, nil
 }
 
 // stage new
@@ -59,26 +69,25 @@ type NewStageCmd struct {
 }
 
 func (cmd *NewStageCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd) error {
-	if _, err := stage.ReadStageFile(parent.File); err == nil {
-		err := fmt.Errorf("stage file already exists: %s", parent.File)
+	if _, err := os.Stat(parent.File); err == nil {
+		return fmt.Errorf("stage file already exists: %s", parent.File)
+	}
+	alg, err := digest.DefaultRegistry().Get(cmd.Alg)
+	if err != nil {
 		return err
 	}
 	root, err := env.getRoot(ctx)
 	if err != nil {
 		return err
 	}
-	obj, err := root.NewObject(ctx, cmd.ID)
+	s, err := stage.New(ctx, root, cmd.ID, alg)
 	if err != nil {
 		return err
 	}
-	stage, err := stage.NewStageFile(obj, cmd.Alg)
-	if err != nil {
+	if err := stage.Write(parent.File, s); err != nil {
 		return err
 	}
-	if err := stage.Write(parent.File); err != nil {
-		return err
-	}
-	env.logger.Info("stage file created", "path", parent.File, "object_id", stage.ID, "object_version", stage.NextHead)
+	env.logger.Info("stage file created", "path", parent.File, "object_id", s.ID(), "object_version", s.NextHead())
 	return nil
 }
 
@@ -92,7 +101,7 @@ type StageAddCmd struct {
 }
 
 func (cmd *StageAddCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd) error {
-	changes, err := parent.readFile(env)
+	s, err := parent.readFile()
 	if err != nil {
 		return err
 	}
@@ -100,7 +109,6 @@ func (cmd *StageAddCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd) 
 	if err != nil {
 		return err
 	}
-	// get file type
 	info, err := os.Stat(absPath)
 	if err != nil {
 		return err
@@ -118,19 +126,17 @@ func (cmd *StageAddCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd) 
 		if cmd.NoHidden {
 			opts = append(opts, stage.AddWithoutHidden())
 		}
-		err = changes.AddDir(ctx, absPath, opts...)
+		if err := s.AddDir(ctx, absPath, env.logger, opts...); err != nil {
+			return err
+		}
 	case ftype.IsRegular():
-		err = changes.AddFile(absPath, stage.AddAs(cmd.As))
+		if err := s.AddFile(ctx, absPath, env.logger, stage.AddAs(cmd.As)); err != nil {
+			return err
+		}
 	default:
-		err = errors.New("unsupported file type for: " + absPath)
+		return errors.New("unsupported file type for: " + absPath)
 	}
-	if err != nil {
-		return err
-	}
-	if err := changes.Write(parent.File); err != nil {
-		return err
-	}
-	return nil
+	return stage.Write(parent.File, s)
 }
 
 // stage commit
@@ -141,29 +147,15 @@ type StageCommitCmd struct {
 }
 
 func (cmd *StageCommitCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd) error {
+	s, err := parent.readFile()
+	if err != nil {
+		return err
+	}
 	root, err := env.getRoot(ctx)
 	if err != nil {
 		return err
 	}
-	stageFile, err := parent.readFile(env)
-	if err != nil {
-		return err
-	}
-	obj, err := root.NewObject(ctx, stageFile.ID)
-	if err != nil {
-		return err
-	}
-	stage, err := stageFile.Stage()
-	if err != nil {
-		return fmt.Errorf("stage has errors: %w", err)
-	}
-	updated, err := objectUpdateOrRevert(
-		ctx,
-		obj,
-		stage,
-		cmd.Message,
-		newUser(cmd.Name, cmd.Email),
-		env.logger)
+	updated, err := objectUpdateOrRevert(ctx, env, root, s, cmd.Message, newUser(cmd.Name, cmd.Email))
 	if err != nil {
 		return err
 	}
@@ -182,19 +174,14 @@ type StageDiffCmd struct {
 }
 
 func (cmd *StageDiffCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd) error {
-	baseState := ocfl.PathMap{}
-	stageFile, err := parent.readFile(env)
+	s, err := parent.readFile()
 	if err != nil {
 		return err
 	}
-	stageState := stageFile.NextState
-	switch {
-	case cmd.Dir != "":
-		algs, err := stageFile.Algs()
-		if err != nil {
-			return err
-		}
-		alg := algs[0]
+	baseState := s.Update().BaseState().PathMap()
+	if cmd.Dir != "" {
+		baseState = ocfl.PathMap{}
+		alg := s.DigestAlgorithm()
 		filesIter, walkErr := ocflfs.UntilErr(ocflfs.WalkFiles(ctx, ocflfs.DirFS(cmd.Dir), "."))
 		for result, err := range digest.DigestFiles(ctx, filesIter, alg) {
 			if err != nil {
@@ -205,21 +192,8 @@ func (cmd *StageDiffCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd)
 		if err := walkErr(); err != nil {
 			return err
 		}
-	default:
-		root, err := env.getRoot(ctx)
-		if err != nil {
-			return err
-		}
-		obj, err := root.NewObject(ctx, stageFile.ID)
-		if err != nil {
-			return err
-		}
-		if obj.Exists() {
-			baseState = obj.Version(0).State().PathMap()
-		}
 	}
-
-	diffs, err := diff.Diff(baseState, stageState)
+	diffs, err := diff.Diff(baseState, s.Update().NewState().PathMap())
 	if err != nil {
 		return err
 	}
@@ -236,11 +210,11 @@ type StageListCmd struct {
 }
 
 func (cmd *StageListCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd) error {
-	stage, err := parent.readFile(env)
+	s, err := parent.readFile()
 	if err != nil {
 		return err
 	}
-	stage.List(env.stdout, cmd.WithDigests)
+	s.List(env.stdout, cmd.WithDigests)
 	return nil
 }
 
@@ -251,44 +225,38 @@ type StageRmCmd struct {
 }
 
 func (cmd *StageRmCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd) error {
-	stage, err := parent.readFile(env)
+	s, err := parent.readFile()
 	if err != nil {
 		return err
 	}
-	if err := stage.Remove(cmd.Path, cmd.Recursive); err != nil {
+	if err := s.Remove(cmd.Path, cmd.Recursive, env.logger); err != nil {
 		return err
 	}
-	if err := stage.Write(parent.File); err != nil {
-		return err
-	}
-	return nil
+	return stage.Write(parent.File, s)
 }
 
 // 'stage status' command
 type StageStatusCmd struct{}
 
+func (cmd *StageStatusCmd) Help() string {
+	return `Shows the object and version the stage is for, whether it has changes to
+commit, and any staged files that have changed since they were added, like
+'git status'. Staged files are only read if their metadata has changed
+since they were added (see 'ocfl stage --help'). If a staged file has
+changed and its content is needed for the commit, status exits with an
+error.`
+}
+
 func (cmd *StageStatusCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd) error {
-	stageFile, err := parent.readFile(env)
+	s, err := parent.readFile()
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(env.stdout, "object:      %s (%s)\n", stageFile.ID, stageFile.NextHead)
-	fmt.Fprintf(env.stdout, "digest alg:  %s\n", stageFile.AlgID)
-	fmt.Fprintf(env.stdout, "fixity algs: %s\n", stageFile.FixityIDs)
-	fmt.Fprintf(env.stdout, "state size:  %d files\n", len(stageFile.NextState))
-	root, err := env.getRoot(ctx)
-	if err != nil {
-		return err
-	}
-	obj, err := root.NewObject(ctx, stageFile.ID)
-	if err != nil {
-		return err
-	}
-	baseState := ocfl.PathMap{}
-	if obj.Exists() {
-		baseState = obj.Version(0).State().PathMap()
-	}
-	stateDiff, err := diff.Diff(baseState, stageFile.NextState)
+	upd := s.Update()
+	fmt.Fprintf(env.stdout, "object:      %s (%s)\n", s.ID(), s.NextHead())
+	fmt.Fprintf(env.stdout, "digest alg:  %s\n", s.DigestAlgorithm().ID())
+	fmt.Fprintf(env.stdout, "state size:  %d files\n", len(upd.NewState().PathMap()))
+	stateDiff, err := diff.Diff(upd.BaseState().PathMap(), upd.NewState().PathMap())
 	if err != nil {
 		return err
 	}
@@ -298,18 +266,37 @@ func (cmd *StageStatusCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCm
 	default:
 		fmt.Fprintln(env.stdout, "stage is unchanged and/or empty")
 	}
-	hasErrors := false
-	// check stage content
-	for err := range stageFile.ContentErrors() {
-		hasErrors = true
-		env.logger.Error(err.Error())
+	return checkStagedFiles(ctx, env, s, parent.File)
+}
+
+// checkStagedFiles reports staged files in s that have changed since they were
+// added, and saves the refreshed stats of unchanged files in the stage file
+// stagePath. It returns an error if the commit needs content that is only in
+// changed files.
+func checkStagedFiles(ctx context.Context, env *cmdEnv, s *stage.Stage, stagePath string) error {
+	result, err := s.Check(ctx)
+	if err != nil {
+		return err
 	}
-	for err := range stageFile.StateErrors() {
-		hasErrors = true
-		env.logger.Error(err.Error())
+	if result.Refreshed {
+		// like 'git status', saving the refreshed stats is opportunistic
+		if err := stage.Write(stagePath, s); err != nil {
+			env.logger.Warn("couldn't save refreshed file stats in the stage file", "err", err)
+		}
 	}
-	if hasErrors {
-		return errors.New("stage has errors")
+	if len(result.Changed) > 0 {
+		fmt.Fprintln(env.stdout, "staged files changed since they were added:")
+		fmt.Fprintln(env.stdout, `  (use "ocfl stage add" to stage the new content)`)
+		for _, c := range result.Changed {
+			if c.Err != nil {
+				fmt.Fprintf(env.stdout, "  error:    %s: %v\n", c.Path, c.Err)
+				continue
+			}
+			fmt.Fprintf(env.stdout, "  %-9s %s (%s)\n", c.Status.String()+":", c.Path, c.Source)
+		}
+	}
+	if len(result.Unavailable) > 0 {
+		return fmt.Errorf("the stage can't be committed: %w\n  add the files again or remove them from the stage", &stage.UnavailableError{Paths: result.Unavailable})
 	}
 	return nil
 }
@@ -321,34 +308,39 @@ func newUser(name string, email string) ocfl.User {
 	return ocfl.User{Name: name, Address: email}
 }
 
-// objectUpdateOrRevert does an object update, reverting partial updates if
-// ctx is canceled. The returned bool indicates if the update completed
-// without being interrupted.
-func objectUpdateOrRevert(
-	ctx context.Context,
-	obj *ocfl.Object,
-	stage *ocfl.Stage,
-	msg string,
-	user ocfl.User,
-	logger *slog.Logger,
-	opts ...ocfl.ObjectUpdateOption,
-) (bool, error) {
-	logger.Info("starting object update", "object_id", obj.ID())
-	opts = append(opts, ocfl.UpdateWithLogger(logger))
-	update, err := obj.Update(ctx, stage, msg, user, opts...)
+// stagedContent returns the content source for committing s: its unchanged
+// staged files.
+func stagedContent(ctx context.Context, env *cmdEnv, s *stage.Stage) (ocfl.ContentSource, error) {
+	return s.Content(ctx, func(dir string) (ocflfs.FS, error) {
+		return env.localFS(dir)
+	})
+}
+
+// objectUpdateOrRevert finalizes the update in s and applies it with content
+// from staged files, reverting partial updates if ctx is canceled. The
+// returned bool indicates if the update completed without being interrupted.
+func objectUpdateOrRevert(ctx context.Context, env *cmdEnv, root *ocfl.Root, s *stage.Stage, msg string, user ocfl.User) (bool, error) {
+	// staged files are checked before the stage is finalized
+	content, err := stagedContent(ctx, env, s)
 	if err != nil {
-		if errors.Is(err, context.Canceled) && update != nil {
-			logger.Info("object update interrupted: reverting to last valid state")
+		return false, fmt.Errorf("the stage can't be committed: %w\n  add the files again or remove them from the stage", err)
+	}
+	if err := s.Finalize(msg, user); err != nil {
+		return false, err
+	}
+	env.logger.Info("starting object update", "object_id", s.ID(), "object_version", s.NextHead())
+	if _, err := root.Apply(ctx, s.Update(), content, ocfl.ApplyWithLogger(env.logger)); err != nil {
+		if errors.Is(err, context.Canceled) {
+			env.logger.Info("object update interrupted: reverting to last valid state")
 			// ctx is already canceled: revert regardless.
-			err = update.Revert(context.WithoutCancel(ctx), obj.FS(), obj.Path(), stage.ContentSource)
-			if err != nil {
+			if err := root.Revert(context.WithoutCancel(ctx), s.Update(), ocfl.ApplyWithLogger(env.logger)); err != nil {
 				return false, fmt.Errorf("while reverting object update: %w", err)
 			}
-			logger.Info("object update was interrupted and successfully reverted")
+			env.logger.Info("object update was interrupted and successfully reverted")
 			return false, nil
 		}
 		return false, fmt.Errorf("during object update: %w", err)
 	}
-	logger.Info("object update complete", "object_id", obj.ID())
+	env.logger.Info("object update complete", "object_id", s.ID(), "object_version", s.NextHead())
 	return true, nil
 }

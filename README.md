@@ -18,7 +18,7 @@ brew install --cask srerickson/ocfl-tools/ocfl
 (Homebrew installs from a cask, which is MacOS-only. On Linux, use `go install`
 or the pre-compiled binaries below.)
 
-If you have [Go](https://go.dev/dl) (v1.25 or greater) installed:
+If you have [Go](https://go.dev/dl) (v1.26 or greater) installed:
 
 ```sh
 go install github.com/srerickson/ocfl-tools/cmd/ocfl@latest
@@ -176,6 +176,23 @@ manually update the `config.json` before using the storage root.
 
 The command `ocfl info` will report errors if the storage root's layout
 configuration is invalid.
+
+### Changes to staged files
+
+Staged content isn't copied until the stage is committed, so the stage file
+records each staged file's metadata (size, modification time, inode, etc.),
+like git's index. `ocfl stage status` lists staged files that have changed
+since they were added, reading only files whose metadata has changed. It exits
+with an error if the commit needs content that is only in changed files: add
+them again (`ocfl stage add`) or remove them from the stage (`ocfl stage rm`).
+
+On network file systems (SMB/CIFS, NFS), where inodes and change times aren't
+stable, use `--check-stat=minimal` (or `OCFL_CHECK_STAT=minimal`) to compare
+only the size, modification time (in whole seconds), and mode:
+
+```sh
+ocfl stage --check-stat=minimal status
+```
 
 ## Development
 

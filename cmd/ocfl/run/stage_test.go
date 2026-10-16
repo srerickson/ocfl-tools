@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
@@ -146,9 +147,9 @@ func TestStage_New(t *testing.T) {
 			be.In(t, stagePath, stderr)
 		})
 		// verify stagefile was created with defaults
-		stageFile, err := stage.ReadStageFile(stagePath)
+		s, err := stage.Read(stagePath)
 		be.NilErr(t, err)
-		be.Equal(t, "sha512", stageFile.AlgID)
+		be.Equal(t, "sha512", s.DigestAlgorithm().ID())
 	})
 
 	t.Run("ignore alg flag for existing objects", func(t *testing.T) {
@@ -165,11 +166,11 @@ func TestStage_New(t *testing.T) {
 			be.NilErr(t, err)
 			be.In(t, stagePath, stderr)
 		})
-		stageFile, err := stage.ReadStageFile(stagePath)
+		s, err := stage.Read(stagePath)
 		be.NilErr(t, err)
 		// stagefile uses sha512
-		be.Equal(t, "sha512", stageFile.AlgID)
-		be.Equal(t, ocfl.V(2), stageFile.NextHead)
+		be.Equal(t, "sha512", s.DigestAlgorithm().ID())
+		be.Equal(t, ocfl.V(2), s.NextHead())
 	})
 }
 
@@ -418,7 +419,124 @@ func TestStage_Status(t *testing.T) {
 		cmd = []string{"stage", "status", "--file", stagePath}
 		testutil.RunCLI(cmd, env, func(err error, stdout, stderr string) {
 			be.Nonzero(t, err)
-			be.In(t, "file is missing", stderr)
+			be.True(t, errors.Is(err, ocfl.ErrMissingContent))
+			be.In(t, "missing:  hello.csv ("+filepath.Join(contentFixture, "hello.csv")+")", stdout)
+			be.In(t, "the stage can't be committed", stderr)
+			be.In(t, "hello.csv", stderr)
 		})
 	})
+}
+
+// 'stage status' reports staged files whose content has changed since they
+// were added, like 'git status'. Files whose stat changed without a change to
+// their content aren't reported.
+func TestStage_StatusChangedFiles(t *testing.T) {
+	// setup creates a stage for a new object with the files in a new
+	// directory. a.txt and b.txt have the same content.
+	setup := func(t *testing.T) (env map[string]string, stagePath, dir string) {
+		tmpDir := t.TempDir()
+		dir = filepath.Join(tmpDir, "content")
+		be.NilErr(t, os.Mkdir(dir, 0755))
+		for name, data := range map[string]string{"a.txt": "same", "b.txt": "same", "c.txt": "other"} {
+			be.NilErr(t, os.WriteFile(filepath.Join(dir, name), []byte(data), 0644))
+		}
+		stagePath = filepath.Join(tmpDir, "stage.json")
+		env = map[string]string{"OCFL_ROOT": filepath.Join(tmpDir, "ocfl")}
+		runOK(t, env, "init-root", "--layout", "0003-hash-and-id-n-tuple-storage-layout")
+		runOK(t, env, "stage", "new", "-f", stagePath, "--id", "ark:xyz/678")
+		runOK(t, env, "stage", "add", "-f", stagePath, dir)
+		return env, stagePath, dir
+	}
+	statusArgs := func(stagePath string) []string {
+		return []string{"stage", "status", "-f", stagePath}
+	}
+
+	t.Run("touched file", func(t *testing.T) {
+		env, stagePath, dir := setup(t)
+		before, err := os.ReadFile(stagePath)
+		be.NilErr(t, err)
+		later := time.Now().Add(time.Hour)
+		be.NilErr(t, os.Chtimes(filepath.Join(dir, "c.txt"), later, later))
+		out := runOK(t, env, statusArgs(stagePath)...)
+		be.False(t, strings.Contains(out, "changed since"))
+		// the file's new stat is saved
+		after, err := os.ReadFile(stagePath)
+		be.NilErr(t, err)
+		be.Unequal(t, string(before), string(after))
+	})
+
+	for _, tt := range []struct {
+		desc string
+		// re-add the changed file, rather than the directory
+		addFile bool
+	}{
+		{desc: "re-add directory"},
+		{desc: "re-add file", addFile: true},
+	} {
+		t.Run("modified file, "+tt.desc, func(t *testing.T) {
+			env, stagePath, dir := setup(t)
+			changed := filepath.Join(dir, "c.txt")
+			be.NilErr(t, os.WriteFile(changed, []byte("changed"), 0644))
+			testutil.RunCLI(statusArgs(stagePath), env, func(err error, stdout, stderr string) {
+				be.True(t, errors.Is(err, ocfl.ErrMissingContent))
+				be.In(t, "modified: c.txt ("+changed+")", stdout)
+				be.In(t, "ocfl stage add", stdout)
+				be.In(t, "content for 1 file(s) has changed or is missing: c.txt", stderr)
+			})
+			// commit fails without finalizing the stage
+			commit := []string{"stage", "commit", "-f", stagePath, "-m", "msg", "-n", "name", "-e", "a@b.c"}
+			testutil.RunCLI(commit, env, func(err error, stdout, stderr string) {
+				be.True(t, errors.Is(err, ocfl.ErrMissingContent))
+				be.In(t, "the stage can't be committed", stderr)
+			})
+			addPath := dir
+			if tt.addFile {
+				addPath = changed
+			}
+			runOK(t, env, "stage", "add", "-f", stagePath, addPath)
+			out := runOK(t, env, statusArgs(stagePath)...)
+			be.False(t, strings.Contains(out, "changed since"))
+			be.Equal(t, "a.txt\nb.txt\nc.txt\n", runOK(t, env, "stage", "ls", "-f", stagePath))
+			runOK(t, env, commit...)
+		})
+	}
+
+	t.Run("modified file with duplicate content", func(t *testing.T) {
+		env, stagePath, dir := setup(t)
+		be.NilErr(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("changed"), 0644))
+		// the change is reported, but b.txt has the staged content
+		out := runOK(t, env, statusArgs(stagePath)...)
+		be.In(t, "modified: a.txt", out)
+		runOK(t, env, "stage", "commit", "-f", stagePath, "-m", "msg", "-n", "name", "-e", "a@b.c")
+		be.Equal(t, "a.txt\nb.txt\nc.txt\n", runOK(t, env, "ls", "--id", "ark:xyz/678"))
+		be.Equal(t, "", runOK(t, env, "validate", "--id", "ark:xyz/678"))
+	})
+
+	t.Run("check-stat minimal", func(t *testing.T) {
+		env, stagePath, dir := setup(t)
+		be.NilErr(t, os.WriteFile(filepath.Join(dir, "c.txt"), []byte("changed"), 0644))
+		testutil.RunCLI([]string{"stage", "--check-stat", "minimal", "status", "-f", stagePath}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "modified: c.txt", stdout)
+		})
+		env["OCFL_CHECK_STAT"] = "invalid"
+		testutil.RunCLI(statusArgs(stagePath), env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "check-stat", stderr)
+		})
+	})
+}
+
+// runOK runs the ocfl command with args, checks that it succeeds, and returns
+// its stdout.
+func runOK(t *testing.T, env map[string]string, args ...string) string {
+	t.Helper()
+	var out string
+	testutil.RunCLI(args, env, func(err error, stdout, stderr string) {
+		if err != nil {
+			t.Fatalf("ocfl %s: %v\n%s", strings.Join(args, " "), err, stderr)
+		}
+		out = stdout
+	})
+	return out
 }

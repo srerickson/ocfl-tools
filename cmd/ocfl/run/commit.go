@@ -2,7 +2,9 @@ package run
 
 import (
 	"context"
-	"fmt"
+	"path/filepath"
+
+	"github.com/srerickson/ocfl-go/digest"
 
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/stage"
 )
@@ -18,30 +20,29 @@ type CommitCmd struct {
 }
 
 func (cmd *CommitCmd) Run(ctx context.Context, env *cmdEnv) error {
+	alg, err := digest.DefaultRegistry().Get(cmd.Alg)
+	if err != nil {
+		return err
+	}
+	absPath, err := filepath.Abs(cmd.Path)
+	if err != nil {
+		return err
+	}
 	root, err := env.getRoot(ctx)
 	if err != nil {
 		return err
 	}
-	obj, err := root.NewObject(ctx, cmd.ID)
+	s, err := stage.New(ctx, root, cmd.ID, alg)
 	if err != nil {
 		return err
 	}
-	changes, err := stage.NewStageFile(obj, cmd.Alg)
-	if err != nil {
-		return err
-	}
-	changes.SetLogger(env.logger)
 	opts := []stage.AddOption{stage.AddAndRemove()}
 	if cmd.NoHidden {
 		opts = append(opts, stage.AddWithoutHidden())
 	}
-	if err := changes.AddDir(ctx, cmd.Path, opts...); err != nil {
+	if err := s.AddDir(ctx, absPath, env.logger, opts...); err != nil {
 		return err
 	}
-	stage, err := changes.Stage()
-	if err != nil {
-		return fmt.Errorf("stage has errors: %w", err)
-	}
-	_, err = objectUpdateOrRevert(ctx, obj, stage, cmd.Message, newUser(cmd.Name, cmd.Email), env.logger)
+	_, err = objectUpdateOrRevert(ctx, env, root, s, cmd.Message, newUser(cmd.Name, cmd.Email))
 	return err
 }

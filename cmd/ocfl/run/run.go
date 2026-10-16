@@ -18,6 +18,7 @@ import (
 	"github.com/srerickson/ocfl-go"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	fsconfig "github.com/srerickson/ocfl-go/fs/config"
+	"github.com/srerickson/ocfl-go/fs/local"
 )
 
 const (
@@ -224,6 +225,17 @@ func (env *cmdEnv) withS3Defaults(loc string) (string, error) {
 	}
 	u.RawQuery = q.Encode()
 	return u.String(), nil
+}
+
+// localFS returns a local FS for the directory dir. It is closed when the CLI
+// returns.
+func (env *cmdEnv) localFS(dir string) (*local.FS, error) {
+	fsys, err := local.NewFS(dir)
+	if err != nil {
+		return nil, err
+	}
+	env.addCloser(fsys)
+	return fsys, nil
 }
 
 func (env *cmdEnv) getRoot(ctx context.Context) (*ocfl.Root, error) {
