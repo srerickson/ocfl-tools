@@ -203,8 +203,8 @@ an error, keeps the stage file, and prints the commands to finish or undo the
 commit:
 
 ```sh
-# resume the commit: repeat the same 'stage commit' command
-ocfl stage commit -f ocfl-stage.json
+# resume the commit
+ocfl stage commit -f ocfl-stage.json --resume
 
 # or undo the partial update, returning the stage to its uncommitted state
 ocfl stage commit -f ocfl-stage.json --revert
