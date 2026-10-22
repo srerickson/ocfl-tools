@@ -51,9 +51,9 @@ only read staged files whose metadata has changed. On network file systems
 --check-stat=minimal to compare only the size, modification time in whole
 seconds, and mode.
 
-If a commit is interrupted, the stage file is kept. Run the same 'stage
-commit' command again to resume the commit, or run it with --revert to undo
-the partial update and return the stage to its uncommitted state.`
+If a commit is interrupted, the stage file is kept. Run 'stage commit
+--resume' to finish the commit, or 'stage commit --revert' to undo the
+partial update and return the stage to its uncommitted state.`
 }
 
 // readFile reads the stage file named by the --file flag.
@@ -167,16 +167,17 @@ type StageCommitCmd struct {
 	Message string `name:"message" short:"m" help:"Message to include in the object version metadata"`
 	Name    string `name:"name" short:"n" ocflenv:"OCFL_USER_NAME" help:"Username to include in the object version metadata"`
 	Email   string `name:"email" short:"e" ocflenv:"OCFL_USER_EMAIL" help:"User email to include in the object version metadata"`
-	Revert  bool   `name:"revert" help:"Undo an interrupted commit and return the stage to its uncommitted state"`
+	Resume  bool   `name:"resume" xor:"mode" help:"Finish an interrupted commit using the saved version metadata"`
+	Revert  bool   `name:"revert" xor:"mode" help:"Undo an interrupted commit and return the stage to its uncommitted state"`
 }
 
 func (cmd *StageCommitCmd) Help() string {
 	return `Commits the stage as a new object version. The version metadata (-m, -n
 and -e) is saved in the stage file before the object is changed. If the
-commit is interrupted or fails, the stage file is kept: run the same command
-again to resume the commit (-m, -n and -e can be omitted, but must match the
-saved values if they are given), or run it with --revert to undo the partial
-update. After a revert, the stage can be changed and committed again.`
+commit is interrupted or fails, the stage file is kept: run the command
+with --resume to finish the commit using the saved values, or with --revert
+to undo the partial update. -m, -n and -e can't be used with --resume or
+--revert. After a revert, the stage can be changed and committed again.`
 }
 
 func (cmd *StageCommitCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
@@ -188,21 +189,18 @@ func (cmd *StageCommitCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCm
 	if err != nil {
 		return err
 	}
-	if cmd.Revert {
+	switch {
+	case cmd.Revert:
 		return cmd.revert(ctx, env, root, s, parent.File, kctx)
+	case cmd.Resume:
+		return cmd.resume(ctx, env, root, s, parent.File, kctx)
+	case s.Finalized():
+		return fmt.Errorf("a commit of %s (%s) is in progress\n  to resume: %s\n  to revert: %s",
+			s.ID(), s.NextHead(),
+			env.stageCommitCommand(parent.File, false),
+			env.stageCommitCommand(parent.File, true))
 	}
 	user := newUser(cmd.Name, cmd.Email)
-	if s.Finalized() {
-		// resume
-		if err := checkVersionInfo(s, cmd.Message, user); err != nil {
-			return err
-		}
-		content, err := stagedContent(ctx, env, s)
-		if err != nil {
-			return env.commitError(root, s, parent.File, true, err)
-		}
-		return applyStage(ctx, env, root, s, parent.File, true, content)
-	}
 	// staged files are checked before the stage is finalized, so it can
 	// still be changed if they aren't available.
 	content, err := stagedContent(ctx, env, s)
@@ -220,15 +218,41 @@ func (cmd *StageCommitCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCm
 	return applyStage(ctx, env, root, s, parent.File, false, content)
 }
 
-// revert reverts the interrupted commit of the finalized stage s, which is
-// saved in the stage file stagePath, and saves the stage as a draft.
-func (cmd *StageCommitCmd) revert(ctx context.Context, env *cmdEnv, root *ocfl.Root, s *stage.Stage, stagePath string, kctx *kong.Context) error {
+// checkNoVersionFlags returns an error if -m, -n or -e were given on the
+// command line. mode is the flag (--resume or --revert) that can't be used
+// with them.
+func checkNoVersionFlags(kctx *kong.Context, mode string) error {
 	// -n and -e may be set from the environment: only flags on the command
 	// line are an error.
 	for _, flag := range []string{"message", "name", "email"} {
 		if flagGiven(kctx, flag) {
-			return errors.New("--revert can't be used with --message (-m), --name (-n) or --email (-e)")
+			return fmt.Errorf("%s can't be used with --message (-m), --name (-n) or --email (-e)", mode)
 		}
+	}
+	return nil
+}
+
+// resume finishes the interrupted commit of the finalized stage s, which is
+// saved in the stage file stagePath, using the saved version metadata.
+func (cmd *StageCommitCmd) resume(ctx context.Context, env *cmdEnv, root *ocfl.Root, s *stage.Stage, stagePath string, kctx *kong.Context) error {
+	if err := checkNoVersionFlags(kctx, "--resume"); err != nil {
+		return err
+	}
+	if !s.Finalized() {
+		return errors.New("stage isn't finalized: nothing to resume")
+	}
+	content, err := stagedContent(ctx, env, s)
+	if err != nil {
+		return env.commitError(root, s, stagePath, true, err)
+	}
+	return applyStage(ctx, env, root, s, stagePath, true, content)
+}
+
+// revert reverts the interrupted commit of the finalized stage s, which is
+// saved in the stage file stagePath, and saves the stage as a draft.
+func (cmd *StageCommitCmd) revert(ctx context.Context, env *cmdEnv, root *ocfl.Root, s *stage.Stage, stagePath string, kctx *kong.Context) error {
+	if err := checkNoVersionFlags(kctx, "--revert"); err != nil {
+		return err
 	}
 	if !s.Finalized() {
 		return errors.New("stage isn't finalized: nothing to revert")
@@ -413,26 +437,6 @@ func newStage(ctx context.Context, root *ocfl.Root, id string, alg digest.Algori
 	return s, err
 }
 
-// checkVersionInfo returns an error if msg or user differ from the version
-// metadata saved when s was finalized. Empty values aren't compared.
-func checkVersionInfo(s *stage.Stage, msg string, user ocfl.User) error {
-	info, _ := s.Update().VersionInfo()
-	var errs []error
-	check := func(flag, given, saved string) {
-		if given != "" && given != saved {
-			errs = append(errs, fmt.Errorf("%s is %q, but the stage was finalized with %q", flag, given, saved))
-		}
-	}
-	check("--message (-m)", msg, info.Message)
-	check("--name (-n)", user.Name, info.User.Name)
-	check("--email (-e)", user.Address, info.User.Address)
-	if len(errs) > 0 {
-		return fmt.Errorf("can't resume the commit of %s (%s): omit the flags to use the saved values: %w",
-			s.ID(), s.NextHead(), errors.Join(errs...))
-	}
-	return nil
-}
-
 // stagedContent returns the content source for committing s: its unchanged
 // staged files.
 func stagedContent(ctx context.Context, env *cmdEnv, s *stage.Stage) (ocfl.ContentSource, error) {
@@ -510,6 +514,8 @@ func (env *cmdEnv) stageCommitCommand(stagePath string, revert bool) string {
 	args = append(args, "stage", "commit", "-f", stagePath)
 	if revert {
 		args = append(args, "--revert")
+	} else {
+		args = append(args, "--resume")
 	}
 	for i, arg := range args {
 		args[i] = shellQuote(arg)

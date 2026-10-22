@@ -565,7 +565,7 @@ func TestStage_CommitInterrupted(t *testing.T) {
 			be.True(t, errors.Is(err, context.Canceled))
 			be.In(t, "commit of "+objID+" ("+head+") was interrupted", stderr)
 			be.In(t, "object path: ", stderr)
-			be.In(t, "to resume: ocfl --root "+env["OCFL_ROOT"]+" stage commit -f "+stagePath+"\n", stderr)
+			be.In(t, "to resume: ocfl --root "+env["OCFL_ROOT"]+" stage commit -f "+stagePath+" --resume\n", stderr)
 			be.In(t, "to revert: ocfl --root "+env["OCFL_ROOT"]+" stage commit -f "+stagePath+" --revert", stderr)
 		})
 		s, err := stage.Read(stagePath)
@@ -573,43 +573,77 @@ func TestStage_CommitInterrupted(t *testing.T) {
 		be.True(t, s.Finalized())
 	}
 
-	t.Run("repeat command to resume", func(t *testing.T) {
+	t.Run("resume", func(t *testing.T) {
 		env, stagePath, _ := setup(t)
-		args := commitArgs(stagePath, "first commit")
-		interrupt(t, env, stagePath, args, "v1")
-		runOK(t, env, args...)
+		interrupt(t, env, stagePath, commitArgs(stagePath, "first commit"), "v1")
+		runOK(t, env, "stage", "commit", "-f", stagePath, "--resume")
 		_, err := os.Stat(stagePath)
 		be.True(t, errors.Is(err, fs.ErrNotExist))
 		be.Equal(t, "", runOK(t, env, "validate", "--id", objID))
-		be.In(t, "first commit", runOK(t, env, "log", "--id", objID))
-	})
-
-	t.Run("resume without flags", func(t *testing.T) {
-		env, stagePath, _ := setup(t)
-		interrupt(t, env, stagePath, commitArgs(stagePath, "first commit"), "v1")
-		runOK(t, env, "stage", "commit", "-f", stagePath)
+		// the saved version metadata is used
 		log := runOK(t, env, "log", "--id", objID)
 		be.In(t, "first commit", log)
 		be.In(t, name, log)
 	})
 
-	t.Run("resume with different flags", func(t *testing.T) {
+	t.Run("commit finalized stage", func(t *testing.T) {
 		env, stagePath, _ := setup(t)
 		interrupt(t, env, stagePath, commitArgs(stagePath, "first commit"), "v1")
-		testutil.RunCLI(commitArgs(stagePath, "other message"), env, func(err error, stdout, stderr string) {
+		for _, args := range [][]string{
+			{"stage", "commit", "-f", stagePath},
+			commitArgs(stagePath, "other message"),
+		} {
+			testutil.RunCLI(args, env, func(err error, stdout, stderr string) {
+				be.Nonzero(t, err)
+				be.In(t, "a commit of "+objID+" (v1) is in progress", stderr)
+				be.In(t, "stage commit -f "+stagePath+" --resume", stderr)
+				be.In(t, "stage commit -f "+stagePath+" --revert", stderr)
+			})
+		}
+		s, err := stage.Read(stagePath)
+		be.NilErr(t, err)
+		be.True(t, s.Finalized())
+	})
+
+	t.Run("resume with flags", func(t *testing.T) {
+		env, stagePath, _ := setup(t)
+		interrupt(t, env, stagePath, commitArgs(stagePath, "first commit"), "v1")
+		for _, flag := range [][]string{{"-m", "msg"}, {"-n", name}, {"--email", email}} {
+			args := append([]string{"stage", "commit", "-f", stagePath, "--resume"}, flag...)
+			testutil.RunCLI(args, env, func(err error, stdout, stderr string) {
+				be.Nonzero(t, err)
+				be.In(t, "--resume can't be used with", stderr)
+			})
+		}
+		// name and email from the environment are ignored
+		userEnv := maps.Clone(env)
+		userEnv["OCFL_USER_NAME"] = "Someone Else"
+		userEnv["OCFL_USER_EMAIL"] = "someone@example.com"
+		runOK(t, userEnv, "stage", "commit", "-f", stagePath, "--resume")
+		log := runOK(t, env, "log", "--id", objID)
+		be.In(t, name, log)
+		be.False(t, strings.Contains(log, "Someone Else"))
+	})
+
+	t.Run("resume and revert", func(t *testing.T) {
+		env, stagePath, _ := setup(t)
+		interrupt(t, env, stagePath, commitArgs(stagePath, "first commit"), "v1")
+		testutil.RunCLI([]string{"stage", "commit", "-f", stagePath, "--resume", "--revert"}, env, func(err error, stdout, stderr string) {
 			be.Nonzero(t, err)
-			be.In(t, `--message (-m) is "other message", but the stage was finalized with "first commit"`, stderr)
-		})
-		// a different name from the environment is also an error
-		otherEnv := maps.Clone(env)
-		otherEnv["OCFL_USER_NAME"] = "Someone Else"
-		testutil.RunCLI([]string{"stage", "commit", "-f", stagePath}, otherEnv, func(err error, stdout, stderr string) {
-			be.Nonzero(t, err)
-			be.In(t, "--name (-n)", stderr)
+			be.In(t, "--resume", stderr)
+			be.In(t, "--revert", stderr)
 		})
 		s, err := stage.Read(stagePath)
 		be.NilErr(t, err)
 		be.True(t, s.Finalized())
+	})
+
+	t.Run("resume draft", func(t *testing.T) {
+		env, stagePath, _ := setup(t)
+		testutil.RunCLI([]string{"stage", "commit", "-f", stagePath, "--resume"}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "stage isn't finalized: nothing to resume", stderr)
+		})
 	})
 
 	t.Run("revert", func(t *testing.T) {
@@ -661,15 +695,15 @@ func TestStage_CommitInterrupted(t *testing.T) {
 		// the commit completes, but the stage file isn't removed
 		stageBytes, err := os.ReadFile(stagePath)
 		be.NilErr(t, err)
-		runOK(t, env, "stage", "commit", "-f", stagePath)
+		runOK(t, env, "stage", "commit", "-f", stagePath, "--resume")
 		be.NilErr(t, os.WriteFile(stagePath, stageBytes, 0644))
 		testutil.RunCLI([]string{"stage", "commit", "-f", stagePath, "--revert"}, env, func(err error, stdout, stderr string) {
 			be.Nonzero(t, err)
 			be.In(t, "is complete and can't be reverted", stderr)
-			be.In(t, "stage commit -f "+stagePath+"\n", stderr)
+			be.In(t, "stage commit -f "+stagePath+" --resume\n", stderr)
 		})
 		// resuming removes the stage file
-		runOK(t, env, "stage", "commit", "-f", stagePath)
+		runOK(t, env, "stage", "commit", "-f", stagePath, "--resume")
 		_, err = os.Stat(stagePath)
 		be.True(t, errors.Is(err, fs.ErrNotExist))
 		be.Equal(t, "", runOK(t, env, "validate", "--id", objID))
@@ -679,7 +713,7 @@ func TestStage_CommitInterrupted(t *testing.T) {
 		env, stagePath, contentDir := setup(t)
 		interrupt(t, env, stagePath, commitArgs(stagePath, "first commit"), "v1")
 		be.NilErr(t, os.WriteFile(filepath.Join(contentDir, "hello.csv"), []byte("changed"), 0644))
-		testutil.RunCLI([]string{"stage", "commit", "-f", stagePath}, env, func(err error, stdout, stderr string) {
+		testutil.RunCLI([]string{"stage", "commit", "-f", stagePath, "--resume"}, env, func(err error, stdout, stderr string) {
 			be.Nonzero(t, err)
 			be.True(t, errors.Is(err, ocfl.ErrMissingContent))
 			// the interrupted attempt may have changed the object
@@ -754,7 +788,7 @@ func TestStage_CommitInterrupted(t *testing.T) {
 
 	t.Run("resume partial update", func(t *testing.T) {
 		env, stagePath := partialUpdate(t)
-		runOK(t, env, "stage", "commit", "-f", stagePath)
+		runOK(t, env, "stage", "commit", "-f", stagePath, "--resume")
 		be.Equal(t, "", runOK(t, env, "validate", "--id", objID))
 		be.Equal(t, "hello.csv\nnew.csv\n", runOK(t, env, "ls", "--id", objID))
 	})
