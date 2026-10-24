@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -565,8 +566,8 @@ func TestStage_CommitInterrupted(t *testing.T) {
 			be.True(t, errors.Is(err, context.Canceled))
 			be.In(t, "commit of "+objID+" ("+head+") was interrupted", stderr)
 			be.In(t, "object path: ", stderr)
-			be.In(t, "to resume: ocfl --root "+env["OCFL_ROOT"]+" stage commit -f "+stagePath+" --resume\n", stderr)
-			be.In(t, "to revert: ocfl --root "+env["OCFL_ROOT"]+" stage commit -f "+stagePath+" --revert", stderr)
+			be.In(t, "to resume: ocfl stage commit -f "+stagePath+" --resume\n", stderr)
+			be.In(t, "to revert: ocfl stage commit -f "+stagePath+" --revert", stderr)
 		})
 		s, err := stage.Read(stagePath)
 		be.NilErr(t, err)
@@ -757,6 +758,7 @@ func TestStage_CommitInterrupted(t *testing.T) {
 		for _, args := range [][]string{
 			{"stage", "add", "-f", stagePath, contentDir},
 			{"stage", "rm", "-f", stagePath, "hello.csv"},
+			{"stage", "delete", "-f", stagePath},
 		} {
 			testutil.RunCLI(args, env, func(err error, stdout, stderr string) {
 				be.Nonzero(t, err)
@@ -800,6 +802,247 @@ func TestStage_CommitInterrupted(t *testing.T) {
 		log := runOK(t, env, "log", "--id", objID)
 		be.In(t, "first commit", log)
 		be.False(t, strings.Contains(log, "second commit"))
+	})
+}
+
+// Stages are saved in the stage cache by default, and named by their stage IDs
+// with -s.
+func TestStage_Cache(t *testing.T) {
+	const objID = "ark://my-object-01"
+	// setup creates a storage root and a stage cache. The stage cache
+	// is set with $OCFL_STAGE_CACHE.
+	setup := func(t *testing.T) (env map[string]string, stageCache, contentDir string) {
+		tmpDir, fixtures := testutil.TempDirTestData(t, `testdata/content-fixture`)
+		stageCache = filepath.Join(tmpDir, "stage-cache")
+		env = map[string]string{
+			"OCFL_ROOT":        filepath.Join(tmpDir, "ocfl"),
+			"OCFL_STAGE_CACHE": stageCache,
+		}
+		runOK(t, env, "init-root", "--layout", "0003-hash-and-id-n-tuple-storage-layout")
+		return env, stageCache, fixtures[0]
+	}
+	commitArgs := func(id string) []string {
+		return []string{"stage", "commit", "-s", id, "-m", "message", "-n", "name", "-e", "a@b.c"}
+	}
+
+	t.Run("workflow", func(t *testing.T) {
+		env, stageCache, contentDir := setup(t)
+		var id string
+		testutil.RunCLI([]string{"stage", "new", "--id", objID}, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			id = strings.TrimSpace(stdout)
+			be.Equal(t, 7, len(id))
+			be.In(t, id, stderr)
+		})
+		ids := stageIDs(t, stageCache)
+		be.Equal(t, 1, len(ids))
+		be.True(t, strings.HasPrefix(ids[0], id))
+		runOK(t, env, "stage", "add", "-s", id, contentDir)
+		be.In(t, "hello.csv\n", runOK(t, env, "stage", "ls", "-s", id))
+		be.In(t, "add: hello.csv", runOK(t, env, "stage", "diff", "-s", id))
+		status := runOK(t, env, "stage", "status", "-s", id)
+		be.In(t, "stage has changes", status)
+		be.In(t, "storage root: file://"+filepath.ToSlash(env["OCFL_ROOT"])+"\n", status)
+		// the full stage ID works too
+		be.In(t, "hello.csv\n", runOK(t, env, "stage", "-s", ids[0], "ls"))
+		runOK(t, env, "stage", "rm", "-s", id, "hello.csv")
+		// the commit is to the storage root saved in the stage, not the
+		// one in $OCFL_ROOT
+		otherEnv := maps.Clone(env)
+		otherEnv["OCFL_ROOT"] = filepath.Join(t.TempDir(), "missing")
+		runOK(t, otherEnv, commitArgs(id)...)
+		be.Equal(t, 0, len(stageIDs(t, stageCache)))
+		be.Equal(t, "", runOK(t, env, "validate", "--id", objID))
+		be.False(t, strings.Contains(runOK(t, env, "ls", "--id", objID), "hello.csv"))
+		// a new stage for the next version has the same ID
+		be.Equal(t, id+"\n", runOK(t, env, "stage", "new", "--id", objID))
+	})
+
+	t.Run("existing stage", func(t *testing.T) {
+		env, stageCache, contentDir := setup(t)
+		id := strings.TrimSpace(runOK(t, env, "stage", "new", "--id", objID))
+		runOK(t, env, "stage", "add", "-s", id, contentDir)
+		testutil.RunCLI([]string{"stage", "new", "--id", objID}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "a stage for "+objID+" already exists", stderr)
+			be.In(t, "ocfl stage status -s "+id+"\n", stderr)
+			be.In(t, "ocfl stage delete -s "+id, stderr)
+		})
+		// the existing stage wasn't replaced
+		be.In(t, "hello.csv\n", runOK(t, env, "stage", "ls", "-s", id))
+		// a stage for another object has a different ID
+		other := strings.TrimSpace(runOK(t, env, "stage", "new", "--id", objID+"-other"))
+		be.Unequal(t, id, other)
+		be.Equal(t, 2, len(stageIDs(t, stageCache)))
+		// a commit in progress
+		testutil.RunCLIInterrupt(commitArgs(id), env, "starting object update", func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, context.Canceled))
+			be.In(t, "to resume: ocfl stage commit -s "+id+" --resume\n", stderr)
+		})
+		testutil.RunCLI([]string{"stage", "new", "--id", objID}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "a commit of "+objID+" (v1) is in progress", stderr)
+			be.In(t, "ocfl stage commit -s "+id+" --resume\n", stderr)
+			be.In(t, "ocfl stage commit -s "+id+" --revert", stderr)
+		})
+		be.In(t, "stage commit -s "+id+" --revert", runOK(t, env, "stage", "status", "-s", id))
+	})
+
+	t.Run("stage cache flag", func(t *testing.T) {
+		env, stageCache, contentDir := setup(t)
+		otherCache := filepath.Join(t.TempDir(), "other-cache")
+		id := strings.TrimSpace(runOK(t, env, "stage", "--stage-cache", otherCache, "new", "--id", objID))
+		be.Equal(t, 0, len(stageIDs(t, stageCache)))
+		be.Equal(t, 1, len(stageIDs(t, otherCache)))
+		testutil.RunCLI([]string{"stage", "ls", "-s", id}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "no stage with ID", stderr)
+		})
+		runOK(t, env, "stage", "add", "--stage-cache", otherCache, "-s", id, contentDir)
+		// --stage-cache is in the commands because it was given on the
+		// command line
+		args := append(commitArgs(id), "--stage-cache", otherCache)
+		testutil.RunCLIInterrupt(args, env, "starting object update", func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, context.Canceled))
+			be.In(t, "to resume: ocfl stage commit --stage-cache "+otherCache+" -s "+id+" --resume\n", stderr)
+		})
+		runOK(t, env, "stage", "commit", "--stage-cache", otherCache, "-s", id, "--resume")
+		be.Equal(t, 0, len(stageIDs(t, otherCache)))
+	})
+
+	t.Run("stage file", func(t *testing.T) {
+		env, stageCache, _ := setup(t)
+		stagePath := filepath.Join(t.TempDir(), "stage.json")
+		testutil.RunCLI([]string{"stage", "new", "-f", stagePath, "--id", objID}, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.Equal(t, "", stdout)
+			be.In(t, stagePath, stderr)
+		})
+		be.Equal(t, 0, len(stageIDs(t, stageCache)))
+		// the stage file doesn't block a stage in the stage cache
+		runOK(t, env, "stage", "new", "--id", objID)
+		testutil.RunCLI([]string{"stage", "new", "-f", stagePath, "--id", objID}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "stage file already exists", stderr)
+		})
+	})
+
+	t.Run("flag errors", func(t *testing.T) {
+		env, _, _ := setup(t)
+		id := strings.TrimSpace(runOK(t, env, "stage", "new", "--id", objID))
+		stagePath := filepath.Join(t.TempDir(), "stage.json")
+		runOK(t, env, "stage", "new", "-f", stagePath, "--id", objID)
+		for _, tt := range []struct {
+			args    []string
+			wantErr string
+		}{
+			{args: []string{"stage", "ls"}, wantErr: "a stage is required"},
+			{args: []string{"stage", "ls", "-s", id, "-f", stagePath}, wantErr: "--stage and --file can't be used together"},
+			{args: []string{"stage", "new", "-s", id, "--id", objID}, wantErr: "--stage (-s) can't be used with 'stage new'"},
+			{args: []string{"stage", "ls", "-s", "zzzzzzz"}, wantErr: "no stage with ID"},
+			// --root is only for 'stage new'
+			{args: []string{"stage", "ls", "-s", id, "--root", env["OCFL_ROOT"]}, wantErr: "--root can only be used with 'stage new'"},
+			{args: []string{"--root", env["OCFL_ROOT"], "stage", "commit", "-f", stagePath, "-m", "msg", "-n", "name"}, wantErr: "--root can only be used with 'stage new'"},
+			{args: []string{"--root", env["OCFL_ROOT"], "stage", "delete", "-s", id}, wantErr: "--root can only be used with 'stage new'"},
+		} {
+			testutil.RunCLI(tt.args, env, func(err error, stdout, stderr string) {
+				be.Nonzero(t, err)
+				be.In(t, tt.wantErr, stderr)
+			})
+		}
+		// --root is fine with 'stage new'
+		runOK(t, env, "--root", env["OCFL_ROOT"], "stage", "new", "--id", objID+"-other")
+	})
+}
+
+func TestStage_Delete(t *testing.T) {
+	tmpDir, fixtures := testutil.TempDirTestData(t, `testdata/content-fixture`)
+	stageCache := filepath.Join(tmpDir, "stage-cache")
+	env := map[string]string{
+		"OCFL_ROOT":        filepath.Join(tmpDir, "ocfl"),
+		"OCFL_STAGE_CACHE": stageCache,
+	}
+	runOK(t, env, "init-root", "--layout", "0003-hash-and-id-n-tuple-storage-layout")
+
+	t.Run("stage cache", func(t *testing.T) {
+		id := strings.TrimSpace(runOK(t, env, "stage", "new", "--id", "object-01"))
+		runOK(t, env, "stage", "add", "-s", id, fixtures[0])
+		runOK(t, env, "stage", "delete", "-s", id)
+		be.Equal(t, 0, len(stageIDs(t, stageCache)))
+		testutil.RunCLI([]string{"stage", "delete", "-s", id}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "no stage with ID", stderr)
+		})
+		// the object can be staged again
+		runOK(t, env, "stage", "new", "--id", "object-01")
+	})
+
+	t.Run("stage file", func(t *testing.T) {
+		stagePath := filepath.Join(t.TempDir(), "stage.json")
+		runOK(t, env, "stage", "new", "-f", stagePath, "--id", "object-02")
+		runOK(t, env, "stage", "delete", "-f", stagePath)
+		_, err := os.Stat(stagePath)
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+	})
+
+	t.Run("finalized", func(t *testing.T) {
+		id := strings.TrimSpace(runOK(t, env, "stage", "new", "--id", "object-03"))
+		runOK(t, env, "stage", "add", "-s", id, fixtures[0])
+		commit := []string{"stage", "commit", "-s", id, "-m", "message", "-n", "name"}
+		testutil.RunCLIInterrupt(commit, env, "starting object update", func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, context.Canceled))
+		})
+		testutil.RunCLI([]string{"stage", "delete", "-s", id}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "the stage can't be deleted: a commit of object-03 (v1) is in progress", stderr)
+			be.In(t, "ocfl stage commit -s "+id+" --resume\n", stderr)
+			be.In(t, "ocfl stage commit -s "+id+" --revert", stderr)
+		})
+		be.In(t, "commit in progress", runOK(t, env, "stage", "status", "-s", id))
+	})
+}
+
+// The default stage cache is in the user's cache directory.
+func TestStage_DefaultCache(t *testing.T) {
+	switch runtime.GOOS {
+	case "windows", "darwin", "ios", "plan9":
+		t.Skip("uses XDG_CACHE_HOME")
+	}
+	tmpDir := t.TempDir()
+	home := filepath.Join(tmpDir, "home")
+	rootEnv := map[string]string{"OCFL_ROOT": filepath.Join(tmpDir, "ocfl")}
+	runOK(t, rootEnv, "init-root", "--layout", "0003-hash-and-id-n-tuple-storage-layout")
+	withEnv := func(kv ...string) map[string]string {
+		env := maps.Clone(rootEnv)
+		for i := 0; i < len(kv); i += 2 {
+			env[kv[i]] = kv[i+1]
+		}
+		return env
+	}
+
+	t.Run("XDG_CACHE_HOME", func(t *testing.T) {
+		cacheHome := filepath.Join(tmpDir, "xdg-cache")
+		env := withEnv("HOME", home, "XDG_CACHE_HOME", cacheHome)
+		runOK(t, env, "stage", "new", "--id", "object-01")
+		be.Equal(t, 1, len(stageIDs(t, filepath.Join(cacheHome, "ocfl-tools", "stage"))))
+	})
+
+	t.Run("HOME", func(t *testing.T) {
+		env := withEnv("HOME", home)
+		runOK(t, env, "stage", "new", "--id", "object-01")
+		be.Equal(t, 1, len(stageIDs(t, filepath.Join(home, ".cache", "ocfl-tools", "stage"))))
+	})
+
+	t.Run("no cache directory", func(t *testing.T) {
+		for _, env := range []map[string]string{
+			withEnv(),
+			withEnv("HOME", home, "XDG_CACHE_HOME", "relative/cache"),
+		} {
+			testutil.RunCLI([]string{"stage", "new", "--id", "object-02"}, env, func(err error, stdout, stderr string) {
+				be.Nonzero(t, err)
+				be.In(t, "set --stage-cache or $OCFL_STAGE_CACHE", stderr)
+			})
+		}
 	})
 }
 

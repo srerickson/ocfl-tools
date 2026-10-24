@@ -56,7 +56,7 @@ func TestFileURL(t *testing.T) {
 	// colon are escaped in, or allowed by, a file url, but a colon in the
 	// first segment of a relative path would be mistaken for a url scheme.
 	rootURL := fileURL(filepath.Join(tmpDir, "ab:c", "my root"))
-	env := map[string]string{"OCFL_ROOT": rootURL}
+	env := map[string]string{"OCFL_ROOT": rootURL, "OCFL_STAGE_CACHE": t.TempDir()}
 	objID := "object-01"
 
 	testutil.RunCLI([]string{"init-root"}, env, func(err error, stdout, stderr string) {

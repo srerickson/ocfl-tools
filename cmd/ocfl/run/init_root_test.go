@@ -40,7 +40,7 @@ func TestInitRoot(t *testing.T) {
 			"0007-n-tuple-omit-prefix-storage-layout": true,
 		}
 		testLayout := func(t *testing.T, root string, layout string, defaultOK bool) {
-			env := map[string]string{"OCFL_ROOT": root}
+			env := map[string]string{"OCFL_ROOT": root, "OCFL_STAGE_CACHE": t.TempDir()}
 			rootDesc := "test description"
 			args := []string{
 				"init-root",

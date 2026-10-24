@@ -53,6 +53,7 @@ Commands:
   ls              List objects in a storage root or files in an object
   stage add       Add a file or directory to the stage
   stage commit    Commit the stage as a new object version
+  stage delete    Delete a stage that hasn't been committed
   stage diff      Show changes between an upstream object or directory and the stage
   stage ls        List files in the stage state
   stage new       Create a new stage for preparing updates to an object
@@ -177,6 +178,32 @@ manually update the `config.json` before using the storage root.
 The command `ocfl info` will report errors if the storage root's layout
 configuration is invalid.
 
+### Stages
+
+A stage records changes to an object that are committed together as a new
+version. Stages are saved in the stage cache directory, which has at most one
+stage for each object in a storage root. `ocfl stage new` prints the new
+stage's ID; other `stage` commands name the stage with `-s` and the ID or a
+unique prefix of it:
+
+```sh
+ocfl stage new --root /mnt/data/my-root --id ark://abc/123
+# prints the stage ID, e.g. "k4zq7mb"
+ocfl stage add -s k4zq7mb my-files/
+ocfl stage status -s k4zq7mb
+ocfl stage commit -s k4zq7mb -m "update data" -n "My Name" -e me@example.net
+```
+
+The stage records its storage root, so `--root` is only used with
+`ocfl stage new`. To discard a stage that hasn't been committed, use
+`ocfl stage delete -s <stage-id>`.
+
+The stage cache is `ocfl-tools/stage` in the user's cache directory
+(`~/.cache` on Linux, `~/Library/Caches` on macOS, `%LocalAppData%` on
+Windows). Set a different directory with `--stage-cache` or
+`$OCFL_STAGE_CACHE`. To save a stage in a file of your choice instead, use
+`-f <path>` in place of `-s`.
+
 ### Changes to staged files
 
 Staged content isn't copied until the stage is committed, so the stage file
@@ -196,22 +223,23 @@ ocfl stage --check-stat=minimal status
 
 ### Interrupted commits
 
-`ocfl commit` and `ocfl stage commit` save the new version in a stage file
-before they change the object. If a commit is interrupted (for example, with
-Ctrl-C) or fails, the object may be partially updated. The command exits with
-an error, keeps the stage file, and prints the commands to finish or undo the
-commit:
+`ocfl commit` and `ocfl stage commit` save the new version in a stage before
+they change the object. (`ocfl commit` uses the stage cache, like
+`ocfl stage new`.) If a commit is interrupted (for example, with Ctrl-C) or
+fails, the object may be partially updated. The command exits with an error,
+keeps the stage, and prints the commands to finish or undo the commit:
 
 ```sh
 # resume the commit
-ocfl stage commit -f ocfl-stage.json --resume
+ocfl stage commit -s k4zq7mb --resume
 
 # or undo the partial update, returning the stage to its uncommitted state
-ocfl stage commit -f ocfl-stage.json --revert
+ocfl stage commit -s k4zq7mb --revert
 ```
 
-`ocfl commit` keeps its stage file in the temporary directory; the error
-message gives its path.
+The stage is kept until the commit is complete, even across reboots. While a
+commit is in progress, the stage can't be changed or deleted, and a new
+stage or `ocfl commit` for the same object is refused.
 
 ## Development
 

@@ -34,17 +34,23 @@ func TestNew(t *testing.T) {
 	be.NilErr(t, err)
 
 	t.Run("new object uses alg", func(t *testing.T) {
-		s, err := stage.New(ctx, root, "ark:xyz/987", digest.SHA256)
+		s, err := stage.New(ctx, root, testRootLoc, "ark:xyz/987", digest.SHA256)
 		be.NilErr(t, err)
 		be.Equal(t, "sha256", s.DigestAlgorithm().ID())
 		be.Equal(t, ocfl.V(1), s.NextHead())
+		be.Equal(t, testRootLoc, s.Root())
 	})
 
 	t.Run("existing object ignores alg", func(t *testing.T) {
-		s, err := stage.New(ctx, root, "ark:123/abc", digest.SHA256)
+		s, err := stage.New(ctx, root, testRootLoc, "ark:123/abc", digest.SHA256)
 		be.NilErr(t, err)
 		be.Equal(t, "sha512", s.DigestAlgorithm().ID())
 		be.Equal(t, ocfl.V(2), s.NextHead())
+	})
+
+	t.Run("root location required", func(t *testing.T) {
+		_, err := stage.New(ctx, root, "", "ark:123/abc", digest.SHA256)
+		be.Nonzero(t, err)
 	})
 }
 
@@ -515,6 +521,7 @@ func TestReadWrite(t *testing.T) {
 		got, err := stage.Read(name)
 		be.NilErr(t, err)
 		be.False(t, got.Finalized())
+		be.Equal(t, testRootLoc, got.Root())
 		be.True(t, got.Update().NewState().Eq(s.Update().NewState()))
 		for p := range s.Update().NewState().PathMap() {
 			want, wantOK := s.SourceFile(p)
@@ -551,6 +558,20 @@ func TestReadWrite(t *testing.T) {
 		be.Nonzero(t, err)
 	})
 
+	t.Run("no root", func(t *testing.T) {
+		var saved map[string]any
+		b, err := json.Marshal(s)
+		be.NilErr(t, err)
+		be.NilErr(t, json.Unmarshal(b, &saved))
+		delete(saved, "root")
+		b, err = json.Marshal(saved)
+		be.NilErr(t, err)
+		bad := filepath.Join(dir, "bad.json")
+		be.NilErr(t, os.WriteFile(bad, b, 0644))
+		_, err = stage.Read(bad)
+		be.In(t, "no storage root", err.Error())
+	})
+
 	t.Run("staged file doesn't match update", func(t *testing.T) {
 		var saved map[string]any
 		b, err := json.Marshal(s)
@@ -567,6 +588,29 @@ func TestReadWrite(t *testing.T) {
 	})
 }
 
+func TestWriteNew(t *testing.T) {
+	root := newRoot(t)
+	dir := t.TempDir()
+	name := filepath.Join(dir, "stage.json")
+	be.NilErr(t, stage.WriteNew(name, newStage(t, root, "ark:123/abc")))
+	got, err := stage.Read(name)
+	be.NilErr(t, err)
+	be.Equal(t, "ark:123/abc", got.ID())
+	// an existing file isn't replaced
+	err = stage.WriteNew(name, newStage(t, root, "ark:xyz/987"))
+	be.True(t, errors.Is(err, fs.ErrExist))
+	got, err = stage.Read(name)
+	be.NilErr(t, err)
+	be.Equal(t, "ark:123/abc", got.ID())
+	// no temp files left
+	entries, err := os.ReadDir(dir)
+	be.NilErr(t, err)
+	be.Equal(t, 1, len(entries))
+}
+
+// testRootLoc is the storage root location used for stages in tests.
+const testRootLoc = "file:///ocfl-root"
+
 // newRoot returns a copy of a storage root with the object ark:123/abc, which
 // has the file a_file.txt.
 func newRoot(t *testing.T) *ocfl.Root {
@@ -580,7 +624,7 @@ func newRoot(t *testing.T) *ocfl.Root {
 // newStage returns a new stage for the object id in root.
 func newStage(t *testing.T, root *ocfl.Root, id string) *stage.Stage {
 	t.Helper()
-	s, err := stage.New(context.Background(), root, id, digest.SHA512)
+	s, err := stage.New(context.Background(), root, testRootLoc, id, digest.SHA512)
 	be.NilErr(t, err)
 	return s
 }

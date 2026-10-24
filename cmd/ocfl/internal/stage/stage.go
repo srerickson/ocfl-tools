@@ -44,15 +44,19 @@ type Stage struct {
 	// to find files that haven't changed. It isn't saved in the stage file.
 	Compare statcache.CompareMode
 
+	root    string // location of the object's storage root
 	update  *ocfl.ObjectUpdate
 	sources []string              // absolute directories that files were added from
 	files   map[string]stagedFile // logical path -> file it was added from
 }
 
-// New returns a new draft stage for the object id in root. If the object
-// doesn't exist, it is created with the digest algorithm alg; otherwise, the
-// stage uses the object's digest algorithm.
-func New(ctx context.Context, root *ocfl.Root, id string, alg digest.Algorithm) (*Stage, error) {
+// New returns a new draft stage for the object id in root, which is at the
+// location rootLoc. If the object doesn't exist, it is created with the digest
+// algorithm alg; otherwise, the stage uses the object's digest algorithm.
+func New(ctx context.Context, root *ocfl.Root, rootLoc string, id string, alg digest.Algorithm) (*Stage, error) {
+	if rootLoc == "" {
+		return nil, errors.New("storage root location is empty")
+	}
 	u, obj, err := root.NewObjectUpdate(ctx, id)
 	if err != nil {
 		return nil, err
@@ -63,7 +67,7 @@ func New(ctx context.Context, root *ocfl.Root, id string, alg digest.Algorithm) 
 			return nil, err
 		}
 	}
-	return &Stage{update: u}, nil
+	return &Stage{root: rootLoc, update: u}, nil
 }
 
 // Read reads the stage file name.
@@ -82,6 +86,30 @@ func Read(name string) (*Stage, error) {
 // Write writes s to the file name as JSON. The file is replaced atomically, so
 // an interrupted Write leaves the previous stage file in place.
 func Write(name string, s *Stage) error {
+	return write(name, s, func(tmp string) error { return os.Rename(tmp, name) })
+}
+
+// WriteNew is like [Write], but it doesn't replace an existing file: if the
+// file name exists, it returns an error that wraps [fs.ErrExist]. The check is
+// atomic on file systems that support hard links.
+func WriteNew(name string, s *Stage) error {
+	return write(name, s, func(tmp string) error {
+		err := os.Link(tmp, name)
+		if err == nil || errors.Is(err, fs.ErrExist) {
+			return err
+		}
+		// no hard links
+		if _, err := os.Lstat(name); err == nil {
+			return &fs.PathError{Op: "write", Path: name, Err: fs.ErrExist}
+		}
+		return os.Rename(tmp, name)
+	})
+}
+
+// write writes s as JSON to a temporary file in name's directory, then calls
+// place to move it to name. The temporary file is removed if it's still there
+// when place returns.
+func write(name string, s *Stage, place func(tmp string) error) error {
 	b, err := json.Marshal(s)
 	if err != nil {
 		return err
@@ -105,8 +133,12 @@ func Write(name string, s *Stage) error {
 	if err := os.Chmod(tmp.Name(), 0644); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), name)
+	return place(tmp.Name())
 }
+
+// Root returns the location of the storage root with the object being
+// updated.
+func (s *Stage) Root() string { return s.root }
 
 // ID returns the ID of the object being updated.
 func (s *Stage) ID() string { return s.update.ID() }
@@ -386,6 +418,7 @@ func (e *UnavailableError) Unwrap() error { return ocfl.ErrMissingContent }
 func (s *Stage) MarshalJSON() ([]byte, error) {
 	s.prune()
 	j := stageJSON{
+		Root:    s.root,
 		Update:  s.update,
 		Sources: []string{},
 		Files:   make(map[string]stagedFile, len(s.files)),
@@ -407,14 +440,17 @@ func (s *Stage) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON implements [json.Unmarshaler] for *Stage. It replaces s with
-// the stage saved in data, which must have an update, and a record for each
-// staged file that matches the update.
+// the stage saved in data, which must have a storage root location, an update,
+// and a record for each staged file that matches the update.
 func (s *Stage) UnmarshalJSON(data []byte) error {
 	var j stageJSON
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&j); err != nil {
 		return fmt.Errorf("decoding stage: %w", err)
+	}
+	if j.Root == "" {
+		return errors.New("stage has no storage root location")
 	}
 	if j.Update == nil {
 		return errors.New("stage has no update")
@@ -436,7 +472,7 @@ func (s *Stage) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("staged file %q has a different digest than the update", p)
 		}
 	}
-	*s = Stage{update: j.Update, sources: j.Sources, files: j.Files}
+	*s = Stage{root: j.Root, update: j.Update, sources: j.Sources, files: j.Files}
 	return nil
 }
 
@@ -506,6 +542,7 @@ type stagedFile struct {
 
 // stageJSON is the saved form of a Stage.
 type stageJSON struct {
+	Root    string                `json:"root"`
 	Update  *ocfl.ObjectUpdate    `json:"update"`
 	Sources []string              `json:"sources"`
 	Files   map[string]stagedFile `json:"files"`
