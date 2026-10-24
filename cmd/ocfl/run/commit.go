@@ -49,6 +49,9 @@ func (cmd *CommitCmd) Run(ctx context.Context, env *cmdEnv, kctx *kong.Context) 
 	if err != nil {
 		return err
 	}
+	if err := checkWritable(root); err != nil {
+		return err
+	}
 	cache, err := cmd.cache(env)
 	if err != nil {
 		return err
@@ -86,5 +89,5 @@ func (cmd *CommitCmd) Run(ctx context.Context, env *cmdEnv, kctx *kong.Context) 
 		}
 		return fmt.Errorf("saving the stage file before commit: %w", err)
 	}
-	return applyStage(ctx, env, root, s, ref, false, content)
+	return applyStage(ctx, env, root, s, ref, nil, false, content)
 }

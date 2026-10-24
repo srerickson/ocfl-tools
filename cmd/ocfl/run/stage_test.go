@@ -9,7 +9,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -772,6 +771,52 @@ func TestStage_CommitInterrupted(t *testing.T) {
 		be.In(t, "hello.csv", runOK(t, env, "stage", "ls", "-f", stagePath))
 	})
 
+	// otherCommit commits contentDir to the object, with a separate stage
+	// cache, as some other process might.
+	otherCommit := func(t *testing.T, env map[string]string, contentDir string) {
+		t.Helper()
+		runOK(t, env, "commit", contentDir, "--id", objID, "-m", "other commit", "-n", name,
+			"--stage-cache", t.TempDir())
+	}
+
+	t.Run("object changed before commit", func(t *testing.T) {
+		env, stagePath, contentDir := setup(t)
+		otherCommit(t, env, contentDir)
+		testutil.RunCLI(commitArgs(stagePath, "first commit"), env, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
+			be.In(t, "failed before the object was changed", stderr)
+			be.In(t, "the stage can't be committed", stderr)
+			be.In(t, "to delete it: ocfl stage delete -f "+stagePath+"\n", stderr)
+		})
+		// the stage is a draft again, so it can be deleted
+		s, err := stage.Read(stagePath)
+		be.NilErr(t, err)
+		be.False(t, s.Finalized())
+		runOK(t, env, "stage", "delete", "-f", stagePath)
+		be.Equal(t, "", runOK(t, env, "validate", "--id", objID))
+		be.False(t, strings.Contains(runOK(t, env, "log", "--id", objID), "first commit"))
+	})
+
+	t.Run("object changed before resume", func(t *testing.T) {
+		env, stagePath, contentDir := setup(t)
+		interrupt(t, env, stagePath, commitArgs(stagePath, "first commit"), "v1")
+		otherCommit(t, env, contentDir)
+		for _, args := range [][]string{
+			{"stage", "commit", "-f", stagePath, "--resume"},
+			{"stage", "commit", "-f", stagePath, "--revert"},
+		} {
+			testutil.RunCLI(args, env, func(err error, stdout, stderr string) {
+				be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
+				be.In(t, "can't be", stderr)
+				be.In(t, "then delete the stage: ocfl stage delete -f "+stagePath+" --force", stderr)
+			})
+		}
+		runOK(t, env, "stage", "delete", "-f", stagePath, "--force")
+		_, err := os.Stat(stagePath)
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+		be.Equal(t, "", runOK(t, env, "validate", "--id", objID))
+	})
+
 	// the object is partially updated: everything is written except the
 	// root inventory sidecar.
 	partialUpdate := func(t *testing.T) (env map[string]string, stagePath string) {
@@ -906,6 +951,9 @@ func TestStage_Cache(t *testing.T) {
 			be.True(t, errors.Is(err, context.Canceled))
 			be.In(t, "to resume: ocfl stage commit --stage-cache "+otherCache+" -s "+id+" --resume\n", stderr)
 		})
+		// also when it's given before the subcommand
+		out := runOK(t, env, "stage", "--stage-cache", otherCache, "status", "-s", id)
+		be.In(t, "ocfl stage commit --stage-cache "+otherCache+" -s "+id+" --revert", out)
 		runOK(t, env, "stage", "commit", "--stage-cache", otherCache, "-s", id, "--resume")
 		be.Equal(t, 0, len(stageIDs(t, otherCache)))
 	})
@@ -923,7 +971,23 @@ func TestStage_Cache(t *testing.T) {
 		runOK(t, env, "stage", "new", "--id", objID)
 		testutil.RunCLI([]string{"stage", "new", "-f", stagePath, "--id", objID}, env, func(err error, stdout, stderr string) {
 			be.Nonzero(t, err)
-			be.In(t, "stage file already exists", stderr)
+			be.In(t, "a stage for "+objID+" already exists: "+stagePath, stderr)
+			be.In(t, "ocfl stage delete -f "+stagePath, stderr)
+		})
+	})
+
+	t.Run("relative stage file", func(t *testing.T) {
+		env, _, contentDir := setup(t)
+		dir := t.TempDir()
+		t.Chdir(dir)
+		runOK(t, env, "stage", "new", "-f", "stage.json", "--id", objID)
+		runOK(t, env, "stage", "add", "-f", "stage.json", contentDir)
+		// commands name the stage file by its absolute path, so they work
+		// from any directory
+		args := []string{"stage", "commit", "-f", "stage.json", "-m", "message", "-n", "name"}
+		testutil.RunCLIInterrupt(args, env, "starting object update", func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, context.Canceled))
+			be.In(t, "to resume: ocfl stage commit -f "+filepath.Join(dir, "stage.json")+" --resume\n", stderr)
 		})
 	})
 
@@ -999,50 +1063,14 @@ func TestStage_Delete(t *testing.T) {
 			be.In(t, "ocfl stage commit -s "+id+" --revert", stderr)
 		})
 		be.In(t, "commit in progress", runOK(t, env, "stage", "status", "-s", id))
-	})
-}
-
-// The default stage cache is in the user's cache directory.
-func TestStage_DefaultCache(t *testing.T) {
-	switch runtime.GOOS {
-	case "windows", "darwin", "ios", "plan9":
-		t.Skip("uses XDG_CACHE_HOME")
-	}
-	tmpDir := t.TempDir()
-	home := filepath.Join(tmpDir, "home")
-	rootEnv := map[string]string{"OCFL_ROOT": filepath.Join(tmpDir, "ocfl")}
-	runOK(t, rootEnv, "init-root", "--layout", "0003-hash-and-id-n-tuple-storage-layout")
-	withEnv := func(kv ...string) map[string]string {
-		env := maps.Clone(rootEnv)
-		for i := 0; i < len(kv); i += 2 {
-			env[kv[i]] = kv[i+1]
-		}
-		return env
-	}
-
-	t.Run("XDG_CACHE_HOME", func(t *testing.T) {
-		cacheHome := filepath.Join(tmpDir, "xdg-cache")
-		env := withEnv("HOME", home, "XDG_CACHE_HOME", cacheHome)
-		runOK(t, env, "stage", "new", "--id", "object-01")
-		be.Equal(t, 1, len(stageIDs(t, filepath.Join(cacheHome, "ocfl-tools", "stage"))))
-	})
-
-	t.Run("HOME", func(t *testing.T) {
-		env := withEnv("HOME", home)
-		runOK(t, env, "stage", "new", "--id", "object-01")
-		be.Equal(t, 1, len(stageIDs(t, filepath.Join(home, ".cache", "ocfl-tools", "stage"))))
-	})
-
-	t.Run("no cache directory", func(t *testing.T) {
-		for _, env := range []map[string]string{
-			withEnv(),
-			withEnv("HOME", home, "XDG_CACHE_HOME", "relative/cache"),
-		} {
-			testutil.RunCLI([]string{"stage", "new", "--id", "object-02"}, env, func(err error, stdout, stderr string) {
-				be.Nonzero(t, err)
-				be.In(t, "set --stage-cache or $OCFL_STAGE_CACHE", stderr)
-			})
-		}
+		testutil.RunCLI([]string{"stage", "delete", "-s", id, "--force"}, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.In(t, "deleted a stage with a commit in progress", stderr)
+		})
+		testutil.RunCLI([]string{"stage", "status", "-s", id}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "no stage with ID", stderr)
+		})
 	})
 }
 

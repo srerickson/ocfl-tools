@@ -27,21 +27,30 @@ func RunCLIInput(args []string, env map[string]string, input string, expect func
 func RunCLIInterrupt(args []string, env map[string]string, match string, expect func(err error, stdout, stderr string)) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stderr := &cancelWriter{match: match, cancel: cancel}
+	RunCLIOnLog(ctx, args, env, match, cancel, expect)
+}
+
+// RunCLIOnLog is like RunCLI, with the context ctx, but it calls fn, once, as
+// soon as the command writes text containing match to stderr (for example, a
+// log message). The command waits for fn to return.
+func RunCLIOnLog(ctx context.Context, args []string, env map[string]string, match string, fn func(), expect func(err error, stdout, stderr string)) {
+	stderr := &matchWriter{match: match, fn: fn}
 	runCLI(ctx, args, env, "", stderr, expect)
 }
 
-// cancelWriter calls cancel when text containing match is written to it.
-type cancelWriter struct {
+// matchWriter calls fn, once, when text containing match is written to it.
+type matchWriter struct {
 	strings.Builder
-	match  string
-	cancel context.CancelFunc
+	match string
+	fn    func()
+	done  bool
 }
 
-func (w *cancelWriter) Write(p []byte) (int, error) {
+func (w *matchWriter) Write(p []byte) (int, error) {
 	n, err := w.Builder.Write(p)
-	if strings.Contains(w.String(), w.match) {
-		w.cancel()
+	if !w.done && strings.Contains(w.String(), w.match) {
+		w.done = true
+		w.fn()
 	}
 	return n, err
 }

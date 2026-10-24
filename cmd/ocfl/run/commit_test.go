@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/carlmjohnson/be"
+	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/testutil"
 )
 
@@ -104,6 +105,28 @@ func TestCommit(t *testing.T) {
 		be.Equal(t, "", runOK(t, env, "stage", "ls", "-s", short))
 		runOK(t, env, "stage", "delete", "-s", short)
 		runOK(t, env, commitArgs(id, "first commit")...)
+	})
+
+	t.Run("object changed during commit", func(t *testing.T) {
+		const id = "object-06"
+		// another commit to the object, with different content, finishes
+		// first
+		otherCommit := func() {
+			runOK(t, env, "commit", filepath.Join(contentDir, "folder1"), "--id", id, "-m", "other commit",
+				"-n", "Other", "--stage-cache", t.TempDir())
+		}
+		testutil.RunCLIOnLog(context.Background(), commitArgs(id, "first commit"), env, "starting object update", otherCommit, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
+			be.In(t, "failed before the object was changed", stderr)
+			be.In(t, "run the command again", stderr)
+		})
+		// the stage is removed, and the commit can be run again
+		be.Equal(t, 0, len(stageIDs(t, stageCache)))
+		runOK(t, env, commitArgs(id, "first commit")...)
+		be.Equal(t, "", runOK(t, env, "validate", "--id", id))
+		log := runOK(t, env, "log", "--id", id)
+		be.In(t, "other commit", log)
+		be.In(t, "first commit", log)
 	})
 
 }

@@ -75,7 +75,8 @@ func (c Cache) Find(prefix string) (string, error) {
 	case 1:
 		return found[0], nil
 	default:
-		return "", fmt.Errorf("stage ID %q is ambiguous: it matches %d stages in %s", prefix, len(found), c.Dir)
+		return "", fmt.Errorf("stage ID %q is ambiguous: it matches %d stages in %s: %s",
+			prefix, len(found), c.Dir, strings.Join(found, ", "))
 	}
 }
 

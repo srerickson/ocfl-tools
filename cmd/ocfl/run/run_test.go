@@ -1,8 +1,10 @@
 package run_test
 
 import (
+	"maps"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -112,5 +114,49 @@ func TestFlagOverridesEnv(t *testing.T) {
 	testutil.RunCLI([]string{"info", "--root", rootPath}, env, func(err error, stdout, stderr string) {
 		be.NilErr(t, err)
 		be.In(t, "storage root: "+fileURL(rootPath)+"\n", stdout)
+	})
+}
+
+// The default stage cache is in the user's cache directory.
+func TestStage_DefaultCache(t *testing.T) {
+	switch runtime.GOOS {
+	case "windows", "darwin", "ios", "plan9":
+		t.Skip("uses XDG_CACHE_HOME")
+	}
+	tmpDir := t.TempDir()
+	home := filepath.Join(tmpDir, "home")
+	rootEnv := map[string]string{"OCFL_ROOT": filepath.Join(tmpDir, "ocfl")}
+	runOK(t, rootEnv, "init-root", "--layout", "0003-hash-and-id-n-tuple-storage-layout")
+	withEnv := func(kv ...string) map[string]string {
+		env := maps.Clone(rootEnv)
+		for i := 0; i < len(kv); i += 2 {
+			env[kv[i]] = kv[i+1]
+		}
+		return env
+	}
+
+	t.Run("XDG_CACHE_HOME", func(t *testing.T) {
+		cacheHome := filepath.Join(tmpDir, "xdg-cache")
+		env := withEnv("HOME", home, "XDG_CACHE_HOME", cacheHome)
+		runOK(t, env, "stage", "new", "--id", "object-01")
+		be.Equal(t, 1, len(stageIDs(t, filepath.Join(cacheHome, "ocfl-tools", "stage"))))
+	})
+
+	t.Run("HOME", func(t *testing.T) {
+		env := withEnv("HOME", home)
+		runOK(t, env, "stage", "new", "--id", "object-01")
+		be.Equal(t, 1, len(stageIDs(t, filepath.Join(home, ".cache", "ocfl-tools", "stage"))))
+	})
+
+	t.Run("no cache directory", func(t *testing.T) {
+		for _, env := range []map[string]string{
+			withEnv(),
+			withEnv("HOME", home, "XDG_CACHE_HOME", "relative/cache"),
+		} {
+			testutil.RunCLI([]string{"stage", "new", "--id", "object-02"}, env, func(err error, stdout, stderr string) {
+				be.Nonzero(t, err)
+				be.In(t, "set --stage-cache or $OCFL_STAGE_CACHE", stderr)
+			})
+		}
 	})
 }

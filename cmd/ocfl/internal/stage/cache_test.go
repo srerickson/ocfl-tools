@@ -56,7 +56,7 @@ func TestCache(t *testing.T) {
 			{prefix: "b", want: id3},
 			{prefix: id3, want: id3},
 			{prefix: "aaaaaaaab", want: id1},
-			{prefix: "aaaaaaaa", wantErr: "ambiguous"},
+			{prefix: "aaaaaaaa", wantErr: "ambiguous: it matches 2 stages in " + dir + ": " + id1 + ", " + id2},
 			{prefix: "c", wantErr: "no stage"},
 			{prefix: "B", wantErr: "no stage"},
 			{prefix: id3 + "b", wantErr: "no stage"},

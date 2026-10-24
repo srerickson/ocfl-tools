@@ -204,6 +204,11 @@ Windows). Set a different directory with `--stage-cache` or
 `$OCFL_STAGE_CACHE`. To save a stage in a file of your choice instead, use
 `-f <path>` in place of `-s`.
 
+A stage's ID is derived from the storage root location and the object ID, as
+given. Different spellings of the same storage root (for example, through a
+symbolic link) have different stage IDs, so they don't prevent a second stage
+for the same object.
+
 ### Changes to staged files
 
 Staged content isn't copied until the stage is committed, so the stage file
@@ -218,7 +223,7 @@ stable, use `--check-stat=minimal` (or `OCFL_CHECK_STAT=minimal`) to compare
 only the size, modification time (in whole seconds), and mode:
 
 ```sh
-ocfl stage --check-stat=minimal status
+ocfl stage --check-stat=minimal status -s <stage-id>
 ```
 
 ### Interrupted commits
@@ -240,6 +245,14 @@ ocfl stage commit -s k4zq7mb --revert
 The stage is kept until the commit is complete, even across reboots. While a
 commit is in progress, the stage can't be changed or deleted, and a new
 stage or `ocfl commit` for the same object is refused.
+
+If the object was changed by something else after the stage was created, the
+commit fails before the object is changed. `ocfl stage commit` returns the
+stage to its uncommitted state so it can be deleted; `ocfl commit` removes its
+stage, so the command can be run again. If the object is changed by something
+else after a commit was interrupted, the commit can't be resumed or reverted:
+check the object with `ocfl validate`, then delete the stage with
+`ocfl stage delete -s <stage-id> --force`.
 
 ## Development
 

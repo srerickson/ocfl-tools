@@ -90,25 +90,32 @@ func Write(name string, s *Stage) error {
 }
 
 // WriteNew is like [Write], but it doesn't replace an existing file: if the
-// file name exists, it returns an error that wraps [fs.ErrExist]. The check is
-// atomic on file systems that support hard links.
+// file name exists, it returns an error that wraps [fs.ErrExist].
 func WriteNew(name string, s *Stage) error {
 	return write(name, s, func(tmp string) error {
 		err := os.Link(tmp, name)
 		if err == nil || errors.Is(err, fs.ErrExist) {
 			return err
 		}
-		// no hard links
-		if _, err := os.Lstat(name); err == nil {
-			return &fs.PathError{Op: "write", Path: name, Err: fs.ErrExist}
+		// No hard links: reserve name with an empty file, then replace it.
+		// Until it's replaced, the empty file can't be read as a stage.
+		f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err != nil {
+			return err
 		}
-		return os.Rename(tmp, name)
+		f.Close()
+		if err := os.Rename(tmp, name); err != nil {
+			os.Remove(name)
+			return err
+		}
+		return nil
 	})
 }
 
 // write writes s as JSON to a temporary file in name's directory, then calls
 // place to move it to name. The temporary file is removed if it's still there
-// when place returns.
+// when place returns. The directory is synced after place succeeds, so the
+// file isn't lost if the system crashes.
 func write(name string, s *Stage, place func(tmp string) error) error {
 	b, err := json.Marshal(s)
 	if err != nil {
@@ -133,7 +140,22 @@ func write(name string, s *Stage, place func(tmp string) error) error {
 	if err := os.Chmod(tmp.Name(), 0644); err != nil {
 		return err
 	}
-	return place(tmp.Name())
+	if err := place(tmp.Name()); err != nil {
+		return err
+	}
+	syncDir(filepath.Dir(name))
+	return nil
+}
+
+// syncDir syncs the directory dir. Errors are ignored: not all systems can
+// sync directories.
+func syncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	_ = d.Close()
 }
 
 // Root returns the location of the storage root with the object being
