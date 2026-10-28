@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -87,18 +88,39 @@ func (c Cache) ShortID(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	n := min(shortIDLen, len(id))
-	for _, other := range ids {
-		if other == id {
-			continue
-		}
-		common := 0
-		for common < len(id) && common < len(other) && id[common] == other[common] {
-			common++
-		}
-		n = max(n, min(common+1, len(id)))
+	return shortID(id, ids), nil
+}
+
+// CacheEntry is a stage file in a [Cache], as listed by [Cache.List].
+type CacheEntry struct {
+	// ID is the stage ID. The stage file is [Cache.Path](ID).
+	ID string
+
+	// ShortID is the shortest prefix of ID, with at least seven
+	// characters, that doesn't start the ID of any other stage file in the
+	// listing. It's what [Cache.ShortID] returns for ID, and what [Cache.Find]
+	// resolves back to ID, if the cache hasn't changed since it was listed.
+	ShortID string
+}
+
+// List returns the stage files in c, sorted by stage ID. Like [Cache.Find],
+// it ignores files that aren't stage files, such as temporary files from
+// [File.Save] and lock files. The stage files aren't opened, so List doesn't
+// report whether they can be read: use [Open] with [Cache.Path]. If c's
+// directory doesn't exist, there are no stage files, and List returns an
+// empty slice and no error. It returns an error only if the directory can't be
+// read.
+func (c Cache) List() ([]CacheEntry, error) {
+	ids, err := c.ids()
+	if err != nil {
+		return nil, err
 	}
-	return id[:n], nil
+	slices.Sort(ids)
+	entries := make([]CacheEntry, len(ids))
+	for i, id := range ids {
+		entries[i] = CacheEntry{ID: id, ShortID: shortID(id, ids)}
+	}
+	return entries, nil
 }
 
 // ids returns the IDs of the stage files in c. Other files, such as temporary
@@ -120,6 +142,23 @@ func (c Cache) ids() ([]string, error) {
 		}
 	}
 	return ids, nil
+}
+
+// shortID returns the shortest prefix of id, with at least seven characters,
+// that doesn't start any of ids other than id itself.
+func shortID(id string, ids []string) string {
+	n := min(shortIDLen, len(id))
+	for _, other := range ids {
+		if other == id {
+			continue
+		}
+		common := 0
+		for common < len(id) && common < len(other) && id[common] == other[common] {
+			common++
+		}
+		n = max(n, min(common+1, len(id)))
+	}
+	return id[:n]
 }
 
 // validID returns true if id has the length and characters of a stage ID.
