@@ -3,6 +3,7 @@ package stage
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -316,13 +317,22 @@ func (f *File) remove() error {
 // write writes s as JSON to a temporary file in name's directory, then calls
 // place to move it to name. The temporary file is removed if it's still there
 // when place returns. The directory is synced after place succeeds, so the
-// file isn't lost if the system crashes.
+// file isn't lost if the system crashes. If name exists, the new file gets its
+// mode; otherwise, it gets mode 0644 less the umask.
 func write(name string, s *Stage, place func(tmp string) error) error {
 	b, err := json.Marshal(s)
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(name), "."+filepath.Base(name)+".*")
+	var perm fs.FileMode
+	info, err := os.Stat(name)
+	switch {
+	case err == nil:
+		perm = info.Mode().Perm()
+	case !errors.Is(err, fs.ErrNotExist):
+		return err
+	}
+	tmp, err := createTemp(filepath.Dir(name), "."+filepath.Base(name)+".")
 	if err != nil {
 		return err
 	}
@@ -338,14 +348,32 @@ func write(name string, s *Stage, place func(tmp string) error) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmp.Name(), 0644); err != nil {
-		return err
+	if info != nil {
+		if err := os.Chmod(tmp.Name(), perm); err != nil {
+			return err
+		}
 	}
 	if err := place(tmp.Name()); err != nil {
 		return err
 	}
 	syncDir(filepath.Dir(name))
 	return nil
+}
+
+// createTemp creates a new file in dir, named prefix followed by a random
+// string, and opens it for writing. Unlike [os.CreateTemp], which uses mode
+// 0600, it creates the file with mode 0644 less the umask, as [os.WriteFile]
+// does, without changing the process's umask.
+func createTemp(dir, prefix string) (*os.File, error) {
+	for range 10000 {
+		name := filepath.Join(dir, prefix+rand.Text())
+		f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		return f, err
+	}
+	return nil, &fs.PathError{Op: "createtemp", Path: filepath.Join(dir, prefix+"*"), Err: fs.ErrExist}
 }
 
 // syncDir syncs the directory dir. Errors are ignored: not all systems can

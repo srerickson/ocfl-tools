@@ -136,6 +136,26 @@ func TestCreate(t *testing.T) {
 	be.Equal(t, 1, len(entries))
 }
 
+// TestCreate_mode isn't parallel: it sets the process's umask.
+func TestCreate_mode(t *testing.T) {
+	root := newRoot(t)
+	for _, tt := range []struct {
+		umask int
+		want  fs.FileMode
+	}{
+		{umask: 0o022, want: 0o644},
+		{umask: 0o077, want: 0o600},
+	} {
+		testutil.SetUmask(t, tt.umask)
+		name := filepath.Join(t.TempDir(), "stage.json")
+		_, err := stage.Create(name, newStage(t, root, "ark:123/abc"))
+		be.NilErr(t, err)
+		info, err := os.Stat(name)
+		be.NilErr(t, err)
+		be.Equal(t, tt.want, info.Mode().Perm())
+	}
+}
+
 func TestFile_Save(t *testing.T) {
 	ctx := context.Background()
 	f := newFile(t, newRoot(t), "ark:123/abc")
@@ -145,6 +165,19 @@ func TestFile_Save(t *testing.T) {
 	got, err := stage.Open(f.Path())
 	be.NilErr(t, err)
 	be.Equal(t, "a_file.txt\nnew.txt\n", list(got.Stage()))
+}
+
+// TestFile_Save_mode isn't parallel: it sets the process's umask.
+func TestFile_Save_mode(t *testing.T) {
+	testutil.SetUmask(t, 0o022)
+	f := newFile(t, newRoot(t), "ark:123/abc")
+	// the mode of the existing file is kept, whatever the umask
+	be.NilErr(t, os.Chmod(f.Path(), 0o640))
+	testutil.SetUmask(t, 0o077)
+	be.NilErr(t, f.Save())
+	info, err := os.Stat(f.Path())
+	be.NilErr(t, err)
+	be.Equal(t, 0o640, info.Mode().Perm())
 }
 
 func TestFile_Check(t *testing.T) {
