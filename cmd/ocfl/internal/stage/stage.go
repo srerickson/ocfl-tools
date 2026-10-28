@@ -13,7 +13,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"maps"
-	"os"
 	"path"
 	"path/filepath"
 	"slices"
@@ -22,6 +21,7 @@ import (
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
+	"github.com/srerickson/ocfl-go/fs/local"
 	ocflstage "github.com/srerickson/ocfl-go/stage"
 
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/statcache"
@@ -30,7 +30,7 @@ import (
 // maximum number of files listed in an error
 const maxFileErrors = 5
 
-// Stage is a draft or finalized update to an OCFL object, with a record of
+// Stage is a draft or frozen update to an OCFL object, with a record of
 // the local file that each logical path added to it was read from. The record
 // includes the file's stat and digest, so staged files that haven't changed
 // aren't read again by [Stage.Check], or by [Stage.AddDir] when a directory
@@ -48,6 +48,10 @@ type Stage struct {
 	update  *ocfl.ObjectUpdate
 	sources []string              // absolute directories that files were added from
 	files   map[string]stagedFile // logical path -> file it was added from
+
+	// the update before it was frozen by freeze; it isn't saved in the
+	// stage file
+	draft *ocfl.ObjectUpdate
 }
 
 // New returns a new draft stage for the object id in root, which is at the
@@ -70,48 +74,6 @@ func New(ctx context.Context, root *ocfl.Root, rootLoc string, id string, alg di
 	return &Stage{root: rootLoc, update: u}, nil
 }
 
-// Read reads the stage file name.
-func Read(name string) (*Stage, error) {
-	b, err := os.ReadFile(name)
-	if err != nil {
-		return nil, err
-	}
-	var s Stage
-	if err := json.Unmarshal(b, &s); err != nil {
-		return nil, fmt.Errorf("reading stage file %s: %w", name, err)
-	}
-	return &s, nil
-}
-
-// Write writes s to the file name as JSON. The file is replaced atomically, so
-// an interrupted Write leaves the previous stage file in place.
-func Write(name string, s *Stage) error {
-	b, err := json.Marshal(s)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(name), "."+filepath.Base(name)+".*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name()) // fails after a successful rename
-	if _, err := io.Copy(tmp, bytes.NewReader(b)); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmp.Name(), 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), name)
-}
-
 // Root returns the location of the storage root with the object being
 // updated.
 func (s *Stage) Root() string { return s.root }
@@ -125,17 +87,15 @@ func (s *Stage) NextHead() ocfl.VNum { return s.update.NextHead() }
 // DigestAlgorithm returns the update's digest algorithm.
 func (s *Stage) DigestAlgorithm() digest.Algorithm { return s.update.DigestAlgorithm() }
 
-// Finalized returns true if the update has been finalized for a commit.
-func (s *Stage) Finalized() bool { return s.update.Finalized() }
+// Frozen returns true if the stage is frozen for a commit: its update is
+// finalized with the new version's metadata, and it can't be changed. A
+// frozen stage is the only record of a commit in progress, which must be
+// resumed or reverted (see [File]).
+func (s *Stage) Frozen() bool { return s.update.Finalized() }
 
 // Update returns the stage's update. Records of staged files for logical
 // paths that are removed or changed in the update are dropped.
 func (s *Stage) Update() *ocfl.ObjectUpdate { return s.update }
-
-// Finalize finalizes the update for a commit. See [ocfl.ObjectUpdate.Finalize].
-func (s *Stage) Finalize(msg string, user ocfl.User) error {
-	return s.update.Finalize(msg, user)
-}
 
 // AddDir adds the files in the directory dir to s. By default, files are
 // added to the top-level directory of the stage and hidden files are
@@ -339,6 +299,7 @@ func (s *Stage) Check(ctx context.Context) (*CheckResult, error) {
 // FS with open. Content in more than one unchanged file is read from the file
 // for the first logical path, in sorted order. If any content the update
 // needs isn't in an unchanged file, Content returns an *[UnavailableError].
+// Errors from open wrap [ocfl.ErrMissingContent].
 func (s *Stage) Content(ctx context.Context, open func(dir string) (ocflfs.FS, error)) (*ocflstage.FileContentMap, error) {
 	result, err := s.Check(ctx)
 	if err != nil {
@@ -364,7 +325,7 @@ func (s *Stage) Content(ctx context.Context, open func(dir string) (ocflfs.FS, e
 		fsys, ok := opened[f.Src]
 		if !ok {
 			if fsys, err = open(s.sources[f.Src]); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("%w: opening staged files in %s: %w", ocfl.ErrMissingContent, s.sources[f.Src], err)
 			}
 			opened[f.Src] = fsys
 		}
@@ -589,6 +550,31 @@ func (s *Stage) add(u *ocfl.ObjectUpdate, dir string, names []string, entries []
 	return nil
 }
 
+// localContent is like [Stage.Content], with the directories that files were
+// added from opened as local FSs. Call closeContent to close them when the
+// content isn't needed.
+func (s *Stage) localContent(ctx context.Context) (content ocfl.ContentSource, closeContent func(), err error) {
+	var opened []*local.FS
+	closeContent = func() {
+		for _, fsys := range opened {
+			fsys.Close()
+		}
+	}
+	fileContent, err := s.Content(ctx, func(dir string) (ocflfs.FS, error) {
+		fsys, err := local.NewFS(dir)
+		if err != nil {
+			return nil, err
+		}
+		opened = append(opened, fsys)
+		return fsys, nil
+	})
+	if err != nil {
+		closeContent()
+		return nil, nil, err
+	}
+	return fileContent, closeContent, nil
+}
+
 // cloneUpdate returns a copy of s's update.
 func (s *Stage) cloneUpdate() (*ocfl.ObjectUpdate, error) {
 	b, err := json.Marshal(s.update)
@@ -600,6 +586,33 @@ func (s *Stage) cloneUpdate() (*ocfl.ObjectUpdate, error) {
 		return nil, err
 	}
 	return &u, nil
+}
+
+// freeze finalizes the update with the version metadata msg and user, for a
+// commit. A copy of the draft is kept, so [Stage.unfreeze] can undo it.
+func (s *Stage) freeze(msg string, user ocfl.User) error {
+	draft, err := s.cloneUpdate()
+	if err != nil {
+		return err
+	}
+	if err := s.update.Finalize(msg, user); err != nil {
+		return err
+	}
+	s.draft = draft
+	return nil
+}
+
+// unfreeze undoes [Stage.freeze], so s is the draft it was before. It may only
+// be called if the frozen update hasn't been applied, or if applying it
+// failed before writing anything: otherwise, the commit must be reverted. It
+// returns an error if s wasn't frozen by freeze, such as a frozen stage read
+// from a stage file.
+func (s *Stage) unfreeze() error {
+	if s.draft == nil {
+		return errors.New("the stage can't be unfrozen: it wasn't frozen by this process")
+	}
+	s.update, s.draft = s.draft, nil
+	return nil
 }
 
 // checker returns a checker for s's files that uses gos goroutines.

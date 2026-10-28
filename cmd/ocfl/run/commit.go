@@ -2,15 +2,19 @@ package run
 
 import (
 	"context"
+	"crypto/rand"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
 
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/stage"
 )
 
+// CommitCmd is 'ocfl commit': it commits a directory as a new object version.
 type CommitCmd struct {
 	ID       string `name:"id" short:"i" help:"The ID for the object to create or update"`
 	Message  string `name:"message" short:"m" help:"Message to include in the object version metadata"`
@@ -41,6 +45,9 @@ func (cmd *CommitCmd) Run(ctx context.Context, env *cmdEnv) error {
 	if err != nil {
 		return err
 	}
+	if err := checkWritable(root); err != nil {
+		return err
+	}
 	s, err := newStage(ctx, root, rootLoc, cmd.ID, alg)
 	if err != nil {
 		return err
@@ -52,33 +59,43 @@ func (cmd *CommitCmd) Run(ctx context.Context, env *cmdEnv) error {
 	if err := s.AddDir(ctx, absPath, env.logger, opts...); err != nil {
 		return err
 	}
-	content, err := stagedContent(ctx, env, s)
+	ref, err := fileRef(tempStageFile())
 	if err != nil {
 		return err
 	}
-	if err := s.Finalize(cmd.Message, newUser(cmd.Name, cmd.Email)); err != nil {
-		return err
-	}
-	stagePath, err := tempStageFile()
+	f, err := ref.create(s)
 	if err != nil {
-		return err
-	}
-	if err := stage.Write(stagePath, s); err != nil {
-		os.Remove(stagePath)
 		return fmt.Errorf("saving the stage file before commit: %w", err)
 	}
-	return applyStage(ctx, env, root, s, stagePath, false, content)
+	err = f.Commit(ctx, root, cmd.Message, newUser(cmd.Name, cmd.Email), env.logger)
+	var notSaved *stage.DraftNotSavedError
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &notSaved):
+		return draftNotSavedError(s, ref, notSaved)
+	case s.Frozen():
+		return commitError(root, s, ref, err)
+	}
+	// Nothing was written to the object, and the stage was only for this
+	// commit: it's removed, so the command can be run again.
+	conflict := errors.Is(err, ocfl.ErrUpdateConflict)
+	if rmErr := f.Delete(); rmErr != nil {
+		notRemoved := "  the stage file couldn't be removed: " + rmErr.Error()
+		deleteIt := "  to delete it: " + ref.command("delete")
+		if conflict {
+			return conflictError(s, err, notRemoved, deleteIt)
+		}
+		return fmt.Errorf("%w\n%s\n%s", err, notRemoved, deleteIt)
+	}
+	if conflict {
+		return conflictError(s, err, "  to commit to the object's current version, run the command again")
+	}
+	return err
 }
 
-// tempStageFile creates an empty stage file in the temporary directory and
-// returns its path.
-func tempStageFile() (string, error) {
-	f, err := os.CreateTemp("", "ocfl-commit-*.json")
-	if err != nil {
-		return "", err
-	}
-	if err := f.Close(); err != nil {
-		return "", err
-	}
-	return f.Name(), nil
+// tempStageFile returns the path of a new stage file in the temporary
+// directory.
+func tempStageFile() string {
+	return filepath.Join(os.TempDir(), "ocfl-commit-"+rand.Text()+".json")
 }

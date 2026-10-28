@@ -18,7 +18,6 @@ import (
 	"github.com/srerickson/ocfl-go"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	fsconfig "github.com/srerickson/ocfl-go/fs/config"
-	"github.com/srerickson/ocfl-go/fs/local"
 )
 
 const (
@@ -227,17 +226,6 @@ func (env *cmdEnv) withS3Defaults(loc string) (string, error) {
 	return u.String(), nil
 }
 
-// localFS returns a local FS for the directory dir. It is closed when the CLI
-// returns.
-func (env *cmdEnv) localFS(dir string) (*local.FS, error) {
-	fsys, err := local.NewFS(dir)
-	if err != nil {
-		return nil, err
-	}
-	env.addCloser(fsys)
-	return fsys, nil
-}
-
 // getRoot returns the storage root named by --root or $OCFL_ROOT.
 func (env *cmdEnv) getRoot(ctx context.Context) (*ocfl.Root, error) {
 	return env.openRoot(ctx, env.rootLocation)
@@ -392,3 +380,34 @@ func newLogger(l log.Level, w io.Writer) *slog.Logger {
 	handl.SetLevel(l)
 	return slog.New(handl)
 }
+
+// flagGiven returns true if the flag name was given on the command line, as
+// opposed to set from the environment or a default.
+func flagGiven(kctx *kong.Context, name string) bool {
+	for _, p := range kctx.Path {
+		if p.Flag != nil && !p.Resolved && p.Flag.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// shellQuote quotes s for a POSIX shell if it has characters that need it.
+func shellQuote(s string) string {
+	safe := func(r rune) bool {
+		return r < 128 && (r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./:=@%+,", r))
+	}
+	if s != "" && strings.IndexFunc(s, func(r rune) bool { return !safe(r) }) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// wrappedError is an error with a message that replaces err's.
+type wrappedError struct {
+	msg string
+	err error
+}
+
+func (e *wrappedError) Error() string { return e.msg }
+func (e *wrappedError) Unwrap() error { return e.err }

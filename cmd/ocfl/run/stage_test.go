@@ -153,8 +153,7 @@ func TestStage_New(t *testing.T) {
 			be.In(t, stagePath, stderr)
 		})
 		// verify stagefile was created with defaults
-		s, err := stage.Read(stagePath)
-		be.NilErr(t, err)
+		s := readStage(t, stagePath)
 		be.Equal(t, "sha512", s.DigestAlgorithm().ID())
 	})
 
@@ -172,8 +171,7 @@ func TestStage_New(t *testing.T) {
 			be.NilErr(t, err)
 			be.In(t, stagePath, stderr)
 		})
-		s, err := stage.Read(stagePath)
-		be.NilErr(t, err)
+		s := readStage(t, stagePath)
 		// stagefile uses sha512
 		be.Equal(t, "sha512", s.DigestAlgorithm().ID())
 		be.Equal(t, ocfl.V(2), s.NextHead())
@@ -568,9 +566,8 @@ func TestStage_CommitInterrupted(t *testing.T) {
 			be.In(t, "to resume: ocfl stage commit -f "+stagePath+" --resume\n", stderr)
 			be.In(t, "to revert: ocfl stage commit -f "+stagePath+" --revert", stderr)
 		})
-		s, err := stage.Read(stagePath)
-		be.NilErr(t, err)
-		be.True(t, s.Finalized())
+		s := readStage(t, stagePath)
+		be.True(t, s.Frozen())
 	}
 
 	t.Run("resume", func(t *testing.T) {
@@ -600,9 +597,8 @@ func TestStage_CommitInterrupted(t *testing.T) {
 				be.In(t, "stage commit -f "+stagePath+" --revert", stderr)
 			})
 		}
-		s, err := stage.Read(stagePath)
-		be.NilErr(t, err)
-		be.True(t, s.Finalized())
+		s := readStage(t, stagePath)
+		be.True(t, s.Frozen())
 	})
 
 	t.Run("resume with flags", func(t *testing.T) {
@@ -633,16 +629,15 @@ func TestStage_CommitInterrupted(t *testing.T) {
 			be.In(t, "--resume", stderr)
 			be.In(t, "--revert", stderr)
 		})
-		s, err := stage.Read(stagePath)
-		be.NilErr(t, err)
-		be.True(t, s.Finalized())
+		s := readStage(t, stagePath)
+		be.True(t, s.Frozen())
 	})
 
 	t.Run("resume draft", func(t *testing.T) {
 		env, stagePath, _ := setup(t)
 		testutil.RunCLI([]string{"stage", "commit", "-f", stagePath, "--resume"}, env, func(err error, stdout, stderr string) {
 			be.Nonzero(t, err)
-			be.In(t, "stage isn't finalized: nothing to resume", stderr)
+			be.In(t, "the stage has no commit in progress: nothing to resume", stderr)
 		})
 	})
 
@@ -651,9 +646,8 @@ func TestStage_CommitInterrupted(t *testing.T) {
 		interrupt(t, env, stagePath, commitArgs(stagePath, "first commit"), "v1")
 		runOK(t, env, "stage", "commit", "-f", stagePath, "--revert")
 		// the stage is a draft with the staged files
-		s, err := stage.Read(stagePath)
-		be.NilErr(t, err)
-		be.False(t, s.Finalized())
+		s := readStage(t, stagePath)
+		be.False(t, s.Frozen())
 		be.Equal(t, 6, len(s.Update().NewState().PathMap()))
 		// the new object was removed
 		be.Equal(t, "", runOK(t, env, "ls"))
@@ -685,7 +679,7 @@ func TestStage_CommitInterrupted(t *testing.T) {
 		env, stagePath, _ := setup(t)
 		testutil.RunCLI([]string{"stage", "commit", "-f", stagePath, "--revert"}, env, func(err error, stdout, stderr string) {
 			be.Nonzero(t, err)
-			be.In(t, "stage isn't finalized: nothing to revert", stderr)
+			be.In(t, "the stage has no commit in progress: nothing to revert", stderr)
 		})
 	})
 
@@ -757,6 +751,7 @@ func TestStage_CommitInterrupted(t *testing.T) {
 		for _, args := range [][]string{
 			{"stage", "add", "-f", stagePath, contentDir},
 			{"stage", "rm", "-f", stagePath, "hello.csv"},
+			{"stage", "delete", "-f", stagePath},
 		} {
 			testutil.RunCLI(args, env, func(err error, stdout, stderr string) {
 				be.Nonzero(t, err)
@@ -768,6 +763,107 @@ func TestStage_CommitInterrupted(t *testing.T) {
 		be.In(t, "commit in progress: v1", out)
 		be.In(t, "stage commit -f "+stagePath+" --revert", out)
 		be.In(t, "hello.csv", runOK(t, env, "stage", "ls", "-f", stagePath))
+	})
+
+	// otherCommit commits contentDir to the object, as some other process
+	// might.
+	otherCommit := func(t *testing.T, env map[string]string, contentDir string) {
+		t.Helper()
+		runOK(t, env, "commit", contentDir, "--id", objID, "-m", "other commit", "-n", name)
+	}
+
+	t.Run("object changed before commit", func(t *testing.T) {
+		env, stagePath, contentDir := setup(t)
+		otherCommit(t, env, contentDir)
+		testutil.RunCLI(commitArgs(stagePath, "first commit"), env, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
+			be.In(t, "failed before the object was changed", stderr)
+			be.In(t, "the stage can't be committed", stderr)
+			be.In(t, "to delete it: ocfl stage delete -f "+stagePath+"\n", stderr)
+		})
+		// the stage is a draft again, so it can be deleted
+		s := readStage(t, stagePath)
+		be.False(t, s.Frozen())
+		runOK(t, env, "stage", "delete", "-f", stagePath)
+		be.Equal(t, "", runOK(t, env, "validate", "--id", objID))
+		be.False(t, strings.Contains(runOK(t, env, "log", "--id", objID), "first commit"))
+	})
+
+	t.Run("object changed, draft not saved", func(t *testing.T) {
+		env, stagePath, contentDir := setup(t)
+		lock, unlock := testutil.LockDir(t, filepath.Dir(stagePath))
+		// the object changes, and the stage file can't be changed, after
+		// the frozen stage is saved
+		changeObject := func() {
+			otherCommit(t, env, contentDir)
+			lock()
+		}
+		testutil.RunCLIOnLog(context.Background(), commitArgs(stagePath, "first commit"), env, interruptAt, changeObject, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
+			be.In(t, "commit of "+objID+" (v1) failed before the object was changed: ", stderr)
+			be.In(t, "\n  the stage file couldn't be restored: ", stderr)
+			be.In(t, "\n  to delete it: ocfl stage delete -f "+stagePath+" --force\n", stderr)
+			be.False(t, strings.Contains(stderr, "can't be resumed or reverted"))
+		})
+		unlock()
+		be.True(t, readStage(t, stagePath).Frozen())
+		runOK(t, env, "stage", "delete", "-f", stagePath, "--force")
+		be.Equal(t, "", runOK(t, env, "validate", "--id", objID))
+		be.False(t, strings.Contains(runOK(t, env, "log", "--id", objID), "first commit"))
+	})
+
+	t.Run("stage file not removed", func(t *testing.T) {
+		env, stagePath, _ := setup(t)
+		lock, unlock := testutil.LockDir(t, filepath.Dir(stagePath))
+		testutil.RunCLIOnLog(context.Background(), commitArgs(stagePath, "first commit"), env, "object update complete", lock, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, stage.ErrNotRemoved))
+			be.In(t, "commit of "+objID+" (v1): the commit is complete, but the stage file couldn't be removed: ", stderr)
+			be.Equal(t, 1, strings.Count(stderr, "couldn't be removed"))
+			be.In(t, "to remove it: ocfl stage commit -f "+stagePath+" --resume\n", stderr)
+		})
+		unlock()
+		runOK(t, env, "stage", "commit", "-f", stagePath, "--resume")
+		_, err := os.Stat(stagePath)
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+		be.Equal(t, "", runOK(t, env, "validate", "--id", objID))
+	})
+
+	t.Run("revert, draft not saved", func(t *testing.T) {
+		env, stagePath, _ := setup(t)
+		interrupt(t, env, stagePath, commitArgs(stagePath, "first commit"), "v1")
+		lock, unlock := testutil.LockDir(t, filepath.Dir(stagePath))
+		lock()
+		testutil.RunCLI([]string{"stage", "commit", "-f", stagePath, "--revert"}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "revert of "+objID+" (v1): the commit was reverted, but the stage file couldn't be saved: ", stderr)
+			be.In(t, "don't resume it", stderr)
+			be.In(t, "to finish reverting: ocfl stage commit -f "+stagePath+" --revert\n", stderr)
+		})
+		unlock()
+		be.True(t, readStage(t, stagePath).Frozen())
+		runOK(t, env, "stage", "commit", "-f", stagePath, "--revert")
+		be.False(t, readStage(t, stagePath).Frozen())
+		be.Equal(t, "", runOK(t, env, "ls"))
+	})
+
+	t.Run("object changed before resume", func(t *testing.T) {
+		env, stagePath, contentDir := setup(t)
+		interrupt(t, env, stagePath, commitArgs(stagePath, "first commit"), "v1")
+		otherCommit(t, env, contentDir)
+		for _, args := range [][]string{
+			{"stage", "commit", "-f", stagePath, "--resume"},
+			{"stage", "commit", "-f", stagePath, "--revert"},
+		} {
+			testutil.RunCLI(args, env, func(err error, stdout, stderr string) {
+				be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
+				be.In(t, "can't be", stderr)
+				be.In(t, "then delete the stage: ocfl stage delete -f "+stagePath+" --force", stderr)
+			})
+		}
+		runOK(t, env, "stage", "delete", "-f", stagePath, "--force")
+		_, err := os.Stat(stagePath)
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+		be.Equal(t, "", runOK(t, env, "validate", "--id", objID))
 	})
 
 	// the object is partially updated: everything is written except the
@@ -818,6 +914,7 @@ func TestStage_Root(t *testing.T) {
 		{"--root", rootPath, "stage", "ls", "-f", stagePath},
 		{"stage", "status", "-f", stagePath, "--root", rootPath},
 		{"--root", rootPath, "stage", "commit", "-f", stagePath, "-m", "message", "-n", "name"},
+		{"--root", rootPath, "stage", "delete", "-f", stagePath},
 	} {
 		testutil.RunCLI(args, env, func(err error, stdout, stderr string) {
 			be.Nonzero(t, err)
@@ -829,6 +926,71 @@ func TestStage_Root(t *testing.T) {
 	otherEnv := map[string]string{"OCFL_ROOT": filepath.Join(t.TempDir(), "missing")}
 	runOK(t, otherEnv, "stage", "commit", "-f", stagePath, "-m", "message", "-n", "name")
 	be.Equal(t, "", runOK(t, env, "validate", "--id", "object-01"))
+}
+
+func TestStage_Delete(t *testing.T) {
+	tmpDir, fixtures := testutil.TempDirTestData(t, `testdata/content-fixture`)
+	env := map[string]string{"OCFL_ROOT": filepath.Join(tmpDir, "ocfl")}
+	runOK(t, env, "init-root", "--layout", "0003-hash-and-id-n-tuple-storage-layout")
+
+	t.Run("draft", func(t *testing.T) {
+		stagePath := filepath.Join(t.TempDir(), "stage.json")
+		runOK(t, env, "stage", "new", "-f", stagePath, "--id", "object-01")
+		runOK(t, env, "stage", "add", "-f", stagePath, fixtures[0])
+		runOK(t, env, "stage", "delete", "-f", stagePath)
+		_, err := os.Stat(stagePath)
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+		testutil.RunCLI([]string{"stage", "delete", "-f", stagePath}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+		})
+		// the object can be staged again
+		runOK(t, env, "stage", "new", "-f", stagePath, "--id", "object-01")
+	})
+
+	t.Run("existing stage file", func(t *testing.T) {
+		stagePath := filepath.Join(t.TempDir(), "stage.json")
+		runOK(t, env, "stage", "new", "-f", stagePath, "--id", "object-02")
+		testutil.RunCLI([]string{"stage", "new", "-f", stagePath, "--id", "object-02"}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "a stage for object-02 already exists: "+stagePath, stderr)
+			be.In(t, "ocfl stage delete -f "+stagePath, stderr)
+		})
+	})
+
+	t.Run("finalized", func(t *testing.T) {
+		stagePath := filepath.Join(t.TempDir(), "stage.json")
+		runOK(t, env, "stage", "new", "-f", stagePath, "--id", "object-03")
+		runOK(t, env, "stage", "add", "-f", stagePath, fixtures[0])
+		commit := []string{"stage", "commit", "-f", stagePath, "-m", "message", "-n", "name"}
+		testutil.RunCLIInterrupt(commit, env, "starting object update", func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, context.Canceled))
+		})
+		testutil.RunCLI([]string{"stage", "delete", "-f", stagePath}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "the stage can't be deleted: a commit of object-03 (v1) is in progress", stderr)
+			be.In(t, "ocfl stage commit -f "+stagePath+" --resume\n", stderr)
+			be.In(t, "ocfl stage commit -f "+stagePath+" --revert", stderr)
+		})
+		be.In(t, "commit in progress", runOK(t, env, "stage", "status", "-f", stagePath))
+		testutil.RunCLI([]string{"stage", "delete", "-f", stagePath, "--force"}, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.In(t, "deleted a stage with a commit in progress", stderr)
+		})
+		_, err := os.Stat(stagePath)
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+	})
+
+	t.Run("relative stage file", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Chdir(dir)
+		runOK(t, env, "stage", "new", "-f", "stage.json", "--id", "object-04")
+		// commands name the stage file by its absolute path, so they work
+		// from any directory
+		testutil.RunCLI([]string{"stage", "new", "-f", "stage.json", "--id", "object-04"}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "ocfl stage delete -f "+filepath.Join(dir, "stage.json"), stderr)
+		})
+	})
 }
 
 // runOK runs the ocfl command with args, checks that it succeeds, and returns
@@ -845,14 +1007,21 @@ func runOK(t *testing.T, env map[string]string, args ...string) string {
 	return out
 }
 
+// readStage reads the stage in the stage file stagePath.
+func readStage(t *testing.T, stagePath string) *stage.Stage {
+	t.Helper()
+	f, err := stage.Open(stagePath)
+	be.NilErr(t, err)
+	return f.Stage()
+}
+
 // applyWithoutRootSidecar applies the finalized update in the stage file
 // stagePath to the object in the storage root at rootPath, failing when it
 // writes the object's root inventory sidecar.
 func applyWithoutRootSidecar(t *testing.T, rootPath, stagePath string) {
 	t.Helper()
 	ctx := context.Background()
-	s, err := stage.Read(stagePath)
-	be.NilErr(t, err)
+	s := readStage(t, stagePath)
 	content, err := s.Content(ctx, func(dir string) (ocflfs.FS, error) {
 		fsys, err := local.NewFS(dir)
 		if err == nil {

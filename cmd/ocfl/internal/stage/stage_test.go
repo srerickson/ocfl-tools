@@ -3,7 +3,6 @@ package stage_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io/fs"
 	"log/slog"
@@ -500,91 +499,6 @@ func TestStage_Content(t *testing.T) {
 		openErr := errors.New("can't open")
 		_, err := s.Content(ctx, func(string) (ocflfs.FS, error) { return nil, openErr })
 		be.True(t, errors.Is(err, openErr))
-	})
-}
-
-func TestReadWrite(t *testing.T) {
-	ctx := context.Background()
-	_, fixtures := testutil.TempDirTestData(t,
-		"testdata/content-fixture",
-		"testdata/store-fixtures/1.0/good-stores/reg-extension-dir-root",
-	)
-	root, err := ocfl.NewRoot(ctx, ocflfs.DirFS(fixtures[1]), ".")
-	be.NilErr(t, err)
-	s := newStage(t, root, "ark:123/abc")
-	be.NilErr(t, s.AddDir(ctx, fixtures[0], nil))
-	dir := t.TempDir()
-	name := filepath.Join(dir, "stage.json")
-
-	t.Run("draft", func(t *testing.T) {
-		be.NilErr(t, stage.Write(name, s))
-		got, err := stage.Read(name)
-		be.NilErr(t, err)
-		be.False(t, got.Finalized())
-		be.Equal(t, testRootLoc, got.Root())
-		be.True(t, got.Update().NewState().Eq(s.Update().NewState()))
-		for p := range s.Update().NewState().PathMap() {
-			want, wantOK := s.SourceFile(p)
-			src, ok := got.SourceFile(p)
-			be.Equal(t, wantOK, ok)
-			be.Equal(t, want, src)
-		}
-		// files that were added aren't read again
-		result, err := got.Check(ctx)
-		be.NilErr(t, err)
-		be.Equal(t, 0, len(result.Changed))
-	})
-
-	t.Run("finalized", func(t *testing.T) {
-		be.NilErr(t, s.Finalize("message", ocfl.User{Name: "name"}))
-		be.NilErr(t, stage.Write(name, s))
-		got, err := stage.Read(name)
-		be.NilErr(t, err)
-		be.True(t, got.Finalized())
-		be.Equal(t, s.Update().NewInventoryDigest(), got.Update().NewInventoryDigest())
-	})
-
-	t.Run("no temp files left", func(t *testing.T) {
-		entries, err := os.ReadDir(dir)
-		be.NilErr(t, err)
-		be.Equal(t, 1, len(entries))
-		be.Equal(t, "stage.json", entries[0].Name())
-	})
-
-	t.Run("invalid", func(t *testing.T) {
-		bad := filepath.Join(dir, "bad.json")
-		be.NilErr(t, os.WriteFile(bad, []byte(`{"object_id":"old stage file"}`), 0644))
-		_, err := stage.Read(bad)
-		be.Nonzero(t, err)
-	})
-
-	t.Run("no root", func(t *testing.T) {
-		var saved map[string]any
-		b, err := json.Marshal(s)
-		be.NilErr(t, err)
-		be.NilErr(t, json.Unmarshal(b, &saved))
-		delete(saved, "root")
-		b, err = json.Marshal(saved)
-		be.NilErr(t, err)
-		bad := filepath.Join(dir, "bad.json")
-		be.NilErr(t, os.WriteFile(bad, b, 0644))
-		_, err = stage.Read(bad)
-		be.In(t, "no storage root", err.Error())
-	})
-
-	t.Run("staged file doesn't match update", func(t *testing.T) {
-		var saved map[string]any
-		b, err := json.Marshal(s)
-		be.NilErr(t, err)
-		be.NilErr(t, json.Unmarshal(b, &saved))
-		files := saved["files"].(map[string]any)
-		files["hello.csv"].(map[string]any)["digest"] = strings.Repeat("0", 128)
-		b, err = json.Marshal(saved)
-		be.NilErr(t, err)
-		bad := filepath.Join(dir, "bad.json")
-		be.NilErr(t, os.WriteFile(bad, b, 0644))
-		_, err = stage.Read(bad)
-		be.In(t, "hello.csv", err.Error())
 	})
 }
 
