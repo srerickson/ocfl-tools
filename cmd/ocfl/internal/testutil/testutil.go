@@ -13,12 +13,28 @@ var testDataFS embed.FS
 
 func TestDataFS() fs.FS { return testDataFS }
 
-// TempDirTestData creates a temporary directory and copies testdata into it. If
-// subdirs are included, only those subdirectories are copied; the second
-// return value is a slice of temporary filepaths for each subdirectory.
-// The directory is automatically cleaned-up at the end of the test.
+// TempDir returns a new temporary directory, like t.TempDir, with symbolic
+// links in its path resolved. Commands report the files they add by their
+// resolved paths, so tests comparing those paths to files in the directory
+// need a resolved path: the system temporary directory may be reached through
+// a symbolic link (on macOS, /var links to /private/var).
+func TempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal("resolving temp directory:", err)
+	}
+	return dir
+}
+
+// TempDirTestData creates a temporary directory with [TempDir] and copies
+// testdata into it. If subdirs are included, only those subdirectories are
+// copied; the second return value is a slice of temporary filepaths for each
+// subdirectory. The directory is automatically cleaned-up at the end of the
+// test.
 func TempDirTestData(t *testing.T, subdirs ...string) (string, []string) {
-	tmpDir := t.TempDir()
+	t.Helper()
+	tmpDir := TempDir(t)
 	if len(subdirs) < 1 {
 		if err := os.CopyFS(tmpDir, testDataFS); err != nil {
 			t.Fatal("creating temp testdata directory: ", err)
