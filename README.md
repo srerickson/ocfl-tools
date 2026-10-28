@@ -285,6 +285,34 @@ stage/commit can't be resumed or reverted: check the object with
 `ocfl validate`, then delete the stage with
 `ocfl stage delete -s <stage-id> --force`.
 
+### Stage locks
+
+Commands that change a stage (`ocfl stage add`, `rm`, `commit`, `delete`, and
+`ocfl commit`) lock its stage file while they run, so only one of them can
+change it at a time. The lock is a file next to the stage file, with `.lock`
+appended to its name, that records the process holding it (its pid, host, and
+start time). `ocfl stage status`, `ls`, and `diff` don't need the lock, so they
+work while another command is changing the stage.
+
+If a command is killed (for example, with `kill -9` or a crash), its lock file
+is left behind, and commands that change the stage fail with an error saying
+the stage is locked. If no other ocfl command is using the stage, clear the
+lock with `ocfl stage delete --lock`, naming the stage with `-s` or `-f`, as
+the error suggests:
+
+```sh
+$ ocfl stage delete -f my-stage.json --lock
+removed lock file /home/me/my-stage.json.lock (held by pid 4242 on my-host,
+since 2026-10-28T09:15:00Z)
+```
+
+`--lock` removes only the lock file: the stage is kept, and it works even if
+the stage file is missing or can't be read. If there's no lock file, it says so
+and exits successfully. It can't be combined with `--force`. Removing the lock
+of a command that is still running lets another command change the stage at
+the same time, so check first that the process recorded in the lock isn't
+running.
+
 ## Development
 
 ### Testing with S3
