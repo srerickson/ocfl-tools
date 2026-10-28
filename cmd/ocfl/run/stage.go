@@ -23,6 +23,10 @@ import (
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/statcache"
 )
 
+// interruptedCommitHint is the hint for an object directory with content but
+// no complete object.
+const interruptedCommitHint = "if a commit to the object was interrupted, resume or revert it using its stage file"
+
 // StageCmd is 'ocfl stage': commands for preparing and committing object
 // updates.
 type StageCmd struct {
@@ -286,8 +290,7 @@ func (cmd *StageCommitCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCm
 	case s.Frozen():
 		return commitError(root, s, ref, err)
 	case errors.Is(err, ocfl.ErrUpdateConflict):
-		return conflictError(s, err, "  the stage can't be committed: delete it and create a new one",
-			"  to delete it: "+ref.command("delete"))
+		return conflictError(s, err, staleDraftGuidance(ref)...)
 	case errors.Is(err, ocfl.ErrMissingContent):
 		return fmt.Errorf("the stage can't be committed: %w\n  add the files again or remove them from the stage", err)
 	}
@@ -451,7 +454,9 @@ func (cmd *StageRmCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context) er
 }
 
 // StageStatusCmd is 'ocfl stage status'.
-type StageStatusCmd struct{}
+type StageStatusCmd struct {
+	Offline bool `name:"offline" help:"skip checking the storage root for changes to the object since the stage was created"`
+}
 
 func (cmd *StageStatusCmd) Help() string {
 	return `Shows the object and version the stage is for, whether it has changes to
@@ -459,7 +464,12 @@ commit, and any staged files that have changed since they were added, like
 'git status'. Staged files are only read if their metadata has changed
 since they were added (see 'ocfl stage --help'). If a staged file has
 changed and its content is needed for the commit, status exits with an
-error.`
+error.
+
+Status reads the storage root to check whether the object has changed since
+the stage was created. It exits with an error if the stage is stale, or if
+the check fails (for example, because the storage root can't be read). Use
+--offline to skip the check.`
 }
 
 func (cmd *StageStatusCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
@@ -477,7 +487,20 @@ func (cmd *StageStatusCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCm
 	if err != nil {
 		return err
 	}
+	up, upstreamErr := cmd.checkUpstream(ctx, env, s, ref)
 	switch {
+	case s.Frozen() && up == nil:
+		fmt.Fprintf(env.stdout, "commit in progress or complete: %s (storage root not checked)\n", s.NextHead())
+		fmt.Fprintf(env.stdout, "  to resume: %s\n", ref.command("commit", "--resume"))
+		fmt.Fprintf(env.stdout, "  to revert: %s\n", ref.command("commit", "--revert"))
+	case s.Frozen() && up.State == stage.UpstreamCommitted:
+		// the staged files aren't needed to finish the commit
+		fmt.Fprintf(env.stdout, "commit complete: %s is committed, but the stage file wasn't removed\n", s.NextHead())
+		fmt.Fprintf(env.stdout, "  to remove it: %s\n", ref.command("commit", "--resume"))
+		return upstreamErr
+	case s.Frozen() && up.State == stage.UpstreamChanged:
+		// the commit can't be resumed or reverted: upstreamErr says what to
+		// do
 	case s.Frozen():
 		fmt.Fprintf(env.stdout, "commit in progress: %s\n", s.NextHead())
 		fmt.Fprintf(env.stdout, "  to resume: %s\n", ref.command("commit", "--resume"))
@@ -487,7 +510,35 @@ func (cmd *StageStatusCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCm
 	default:
 		fmt.Fprintln(env.stdout, "stage is unchanged and/or empty")
 	}
-	return checkStagedFiles(ctx, env, f)
+	return errors.Join(upstreamErr, checkStagedFiles(ctx, env, f, up))
+}
+
+// checkUpstream checks the object in the storage root of the stage s, which
+// ref names, for changes since s was created, and prints the upstream: line.
+// It returns nil if the object wasn't checked, because of --offline or an
+// error checking it. It returns an error if the check fails, or if s is
+// stale.
+func (cmd *StageStatusCmd) checkUpstream(ctx context.Context, env *cmdEnv, s *stage.Stage, ref stageRef) (*stage.Upstream, error) {
+	const label = "upstream:     "
+	if cmd.Offline {
+		fmt.Fprintln(env.stdout, label+"not checked (--offline)")
+		return nil, nil
+	}
+	root, err := env.openRoot(ctx, s.Root())
+	var up stage.Upstream
+	if err == nil {
+		up, err = s.CheckUpstream(ctx, root)
+	}
+	if err != nil {
+		fmt.Fprintln(env.stdout, label+"unknown (couldn't check the object)")
+		return nil, &wrappedError{
+			msg: "couldn't check the object in the storage root: " + err.Error() +
+				"\n  to skip the check: " + ref.command("status", "--offline"),
+			err: err,
+		}
+	}
+	fmt.Fprintln(env.stdout, label+upstreamString(s, up))
+	return &up, upstreamError(root, s, ref, up)
 }
 
 // StageStagesCmd is 'ocfl stage' with no sub-command: it lists the stages in
@@ -699,8 +750,10 @@ func checkNoVersionFlags(kctx *kong.Context, mode string) error {
 
 // checkStagedFiles reports staged files in the stage in f that have changed
 // since they were added. It returns an error if the commit needs content that
-// is only in changed files.
-func checkStagedFiles(ctx context.Context, env *cmdEnv, f *stage.File) error {
+// is only in changed files. up is the state of the stage's object in the
+// storage root, or nil if it wasn't checked: for a frozen stage, it sets what
+// the error says to do.
+func checkStagedFiles(ctx context.Context, env *cmdEnv, f *stage.File, up *stage.Upstream) error {
 	s := f.Stage()
 	result, err := f.Check(ctx, env.logger)
 	if err != nil {
@@ -720,13 +773,78 @@ func checkStagedFiles(ctx context.Context, env *cmdEnv, f *stage.File) error {
 		}
 	}
 	if len(result.Unavailable) > 0 {
-		todo := "add the files again or remove them from the stage"
-		if s.Frozen() {
+		err := fmt.Errorf("the stage can't be committed: %w", &stage.UnavailableError{Paths: result.Unavailable})
+		var todo string
+		switch {
+		case !s.Frozen():
+			todo = "add the files again or remove them from the stage"
+		case up == nil:
+			todo = "restore the files to resume the commit, or revert it; if the commit is already complete, --resume only removes the stage file"
+		case up.State == stage.UpstreamAtBase:
 			todo = "restore the files to resume the commit, or revert it"
+		default:
+			// the commit can't be resumed or reverted
+			return err
 		}
-		return fmt.Errorf("the stage can't be committed: %w\n  %s", &stage.UnavailableError{Paths: result.Unavailable}, todo)
+		return fmt.Errorf("%w\n  %s", err, todo)
 	}
 	return nil
+}
+
+// upstreamString describes up, the state of the object in the storage root of
+// the stage s, for 'stage status'.
+func upstreamString(s *stage.Stage, up stage.Upstream) string {
+	next := s.NextHead()
+	// only a stage for a new object has v1 as its next version
+	newObject := next.Num() == 1
+	switch {
+	case up.State == stage.UpstreamAtBase && !s.Frozen():
+		return "stage head matches upstream object"
+	case up.State == stage.UpstreamAtBase:
+		return fmt.Sprintf("commit of %s isn't complete", next)
+	case up.State == stage.UpstreamCommitted:
+		return fmt.Sprintf("%s (commit is complete)", next)
+	case !up.Exists:
+		return "no object (deleted since the stage was created)"
+	case newObject && !up.Head.IsZero():
+		return fmt.Sprintf("%s (created since the stage was created)", up.Head)
+	case newObject:
+		return "head unknown (object directory created since the stage was created)"
+	case up.Head.IsZero():
+		return "head unknown (changed since the stage was created)"
+	case up.Head.Num() < next.Num():
+		// the head isn't newer than the stage's base: the object was
+		// replaced, such as by deleting and creating it again
+		return fmt.Sprintf("%s (replaced since the stage was created)", up.Head)
+	}
+	return fmt.Sprintf("%s (changed since the stage was created)", up.Head)
+}
+
+// upstreamError returns an error wrapping [ocfl.ErrUpdateConflict] if up, the
+// state of the object in root, shows that the stage s, which ref names, is
+// stale. Otherwise, it returns nil.
+func upstreamError(root *ocfl.Root, s *stage.Stage, ref stageRef, up stage.Upstream) error {
+	if up.State != stage.UpstreamChanged {
+		return nil
+	}
+	if s.Frozen() {
+		return commitError(root, s, ref, ocfl.ErrUpdateConflict)
+	}
+	lines := []string{fmt.Sprintf("the stage for %s (%s) is stale: the object has changed since the stage was created", s.ID(), s.NextHead())}
+	lines = append(lines, staleDraftGuidance(ref)...)
+	if s.NextHead().Num() == 1 && up.Exists && up.Head.IsZero() {
+		// the object directory has content, but no inventory that can be
+		// read
+		lines = append(lines, "  "+interruptedCommitHint)
+	}
+	return &wrappedError{msg: strings.Join(lines, "\n"), err: ocfl.ErrUpdateConflict}
+}
+
+// staleDraftGuidance returns what to do with the draft stage that ref names
+// when the object has changed since the stage was created.
+func staleDraftGuidance(ref stageRef) []string {
+	return []string{"  the stage can't be committed: delete it and create a new one",
+		"  to delete it: " + ref.command("delete")}
 }
 
 // checkWritable returns an error if root's storage can't be written, so a
@@ -750,7 +868,7 @@ func newUser(name string, email string) ocfl.User {
 func newStage(ctx context.Context, root *ocfl.Root, rootLoc string, id string, alg digest.Algorithm) (*stage.Stage, error) {
 	s, err := stage.New(ctx, root, rootLoc, id, alg)
 	if errors.Is(err, ocfl.ErrObjectIncomplete) {
-		return nil, fmt.Errorf("%w\nif a commit to the object was interrupted, resume or revert it using its stage file", err)
+		return nil, fmt.Errorf("%w\n%s", err, interruptedCommitHint)
 	}
 	return s, err
 }
