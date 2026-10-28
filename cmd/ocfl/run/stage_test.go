@@ -890,6 +890,44 @@ func TestStage_DeleteLock(t *testing.T) {
 		be.NilErr(t, err)
 	})
 
+	// A command whose lock is removed after it removed the stage file
+	// succeeds, with a warning: there's nothing left for another command to
+	// have changed.
+	t.Run("lock removed after the stage is deleted", func(t *testing.T) {
+		otherID := strings.TrimSpace(runOK(t, env, "stage", "new", "--id", "object-03"))
+		clearLock := func() { runOK(t, env, "stage", "delete", "-s", otherID, "--lock") }
+		testutil.RunCLIOnLog(context.Background(), []string{"stage", "delete", "-s", otherID}, env, "stage deleted", clearLock, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.In(t, "the stage was deleted, but another command cleared the stage's lock while this one held it", stderr)
+		})
+		noLocks(t, stageCache)
+		testutil.RunCLI([]string{"stage", "status", "-s", otherID}, env, func(err error, stdout, stderr string) {
+			be.In(t, "no stage", stderr)
+		})
+	})
+
+	// A commit whose lock is removed while the object is updated finishes,
+	// but it doesn't remove the stage file, which another command may have
+	// changed.
+	t.Run("lock removed during commit", func(t *testing.T) {
+		otherID := strings.TrimSpace(runOK(t, env, "stage", "new", "--id", "object-04"))
+		runOK(t, env, "stage", "add", "-s", otherID, contentDir)
+		clearLock := func() { runOK(t, env, "stage", "delete", "-s", otherID, "--lock") }
+		args := []string{"stage", "commit", "-s", otherID, "-m", "message", "-n", "name"}
+		testutil.RunCLIOnLog(context.Background(), args, env, "object update complete", clearLock, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, stage.ErrNotRemoved))
+			be.True(t, errors.Is(err, stage.ErrLockBroken))
+			be.In(t, "the commit is complete, but the stage file couldn't be removed", stderr)
+			be.In(t, "\n  to remove it: ocfl stage commit -s "+otherID+" --resume\n", stderr)
+			be.In(t, "\n  another command may have changed the stage at the same time: check it with: ocfl stage status -s "+otherID+"\n", stderr)
+		})
+		noLocks(t, stageCache)
+		be.In(t, "commit is complete", runOK(t, env, "stage", "status", "-s", otherID))
+		runOK(t, env, "stage", "commit", "-s", otherID, "--resume")
+		noLocks(t, stageCache)
+		be.Equal(t, "", runOK(t, env, "validate", "--id", "object-04"))
+	})
+
 	// A command that can't release its lock says how to clear it. This
 	// subtest sets the process's umask: TestStage_DeleteLock isn't parallel.
 	t.Run("lock not released, frozen stage", func(t *testing.T) {
