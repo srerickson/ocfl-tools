@@ -683,25 +683,38 @@ func TestStage_CommitInterrupted(t *testing.T) {
 		})
 	})
 
-	t.Run("revert completed commit", func(t *testing.T) {
-		env, stagePath, _ := setup(t)
-		interrupt(t, env, stagePath, commitArgs(stagePath, "first commit"), "v1")
-		// the commit completes, but the stage file isn't removed
-		stageBytes, err := os.ReadFile(stagePath)
-		be.NilErr(t, err)
-		runOK(t, env, "stage", "commit", "-f", stagePath, "--resume")
-		be.NilErr(t, os.WriteFile(stagePath, stageBytes, 0644))
-		testutil.RunCLI([]string{"stage", "commit", "-f", stagePath, "--revert"}, env, func(err error, stdout, stderr string) {
-			be.Nonzero(t, err)
-			be.In(t, "is complete and can't be reverted", stderr)
-			be.In(t, "stage commit -f "+stagePath+" --resume\n", stderr)
+	// the commit completes, but the stage file isn't removed. Afterwards,
+	// the staged files may change: they aren't needed to finish the commit.
+	for _, tt := range []struct {
+		desc   string
+		change func(name string) error
+	}{
+		{"", func(string) error { return nil }},
+		{", staged file deleted", os.Remove},
+		{", staged file modified", func(name string) error {
+			return os.WriteFile(name, []byte("changed"), 0o644)
+		}},
+	} {
+		t.Run("revert completed commit"+tt.desc, func(t *testing.T) {
+			env, stagePath, contentDir := setup(t)
+			interrupt(t, env, stagePath, commitArgs(stagePath, "first commit"), "v1")
+			stageBytes, err := os.ReadFile(stagePath)
+			be.NilErr(t, err)
+			runOK(t, env, "stage", "commit", "-f", stagePath, "--resume")
+			be.NilErr(t, os.WriteFile(stagePath, stageBytes, 0644))
+			be.NilErr(t, tt.change(filepath.Join(contentDir, "hello.csv")))
+			testutil.RunCLI([]string{"stage", "commit", "-f", stagePath, "--revert"}, env, func(err error, stdout, stderr string) {
+				be.Nonzero(t, err)
+				be.In(t, "is complete and can't be reverted", stderr)
+				be.In(t, "stage commit -f "+stagePath+" --resume\n", stderr)
+			})
+			// resuming, as the revert error says, removes the stage file
+			runOK(t, env, "stage", "commit", "-f", stagePath, "--resume")
+			_, err = os.Stat(stagePath)
+			be.True(t, errors.Is(err, fs.ErrNotExist))
+			be.Equal(t, "", runOK(t, env, "validate", "--id", objID))
 		})
-		// resuming removes the stage file
-		runOK(t, env, "stage", "commit", "-f", stagePath, "--resume")
-		_, err = os.Stat(stagePath)
-		be.True(t, errors.Is(err, fs.ErrNotExist))
-		be.Equal(t, "", runOK(t, env, "validate", "--id", objID))
-	})
+	}
 
 	t.Run("resume after content changed", func(t *testing.T) {
 		env, stagePath, contentDir := setup(t)
