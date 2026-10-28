@@ -38,7 +38,7 @@ type StageCmd struct {
 
 	Add    StageAddCmd    `cmd:"" help:"Add a file or directory to the stage"`
 	Commit StageCommitCmd `cmd:"" help:"Commit the stage as a new object version"`
-	Delete StageDeleteCmd `cmd:"" help:"Delete a stage that hasn't been committed"`
+	Delete StageDeleteCmd `cmd:"" help:"Delete a stage that hasn't been committed, or clear its lock"`
 	Diff   StageDiffCmd   `cmd:"" help:"Show changes between an upstream object or directory and the stage"`
 	Ls     StageListCmd   `cmd:"" help:"List files in the stage state"`
 	New    NewStageCmd    `cmd:"" help:"Create a new stage for preparing updates to an object"`
@@ -84,13 +84,26 @@ stage that hasn't been committed.
 Commands that change a stage lock its stage file with a lock file (the stage
 file's name with '.lock' appended) while they run, so only one of them can
 change it at a time. If a command is killed, the lock file may be left
-behind: if no other ocfl command is using the stage, remove it.`
+behind, and the commands fail because the stage is locked. If no other ocfl
+command is using the stage, clear the lock with 'stage delete --lock'.`
 }
 
 // ref returns the stage file named by --stage or --file. It returns an error
 // if neither is set, or if --root was given on the command line: commands
 // other than 'stage new' use the storage root saved in the stage.
 func (cmd *StageCmd) ref(env *cmdEnv, kctx *kong.Context) (stageRef, error) {
+	return cmd.findRef(env, kctx, stage.Cache.Find)
+}
+
+// lockRef is like ref, but with --stage, it also finds a stage that has a lock
+// file but no stage file.
+func (cmd *StageCmd) lockRef(env *cmdEnv, kctx *kong.Context) (stageRef, error) {
+	return cmd.findRef(env, kctx, stage.Cache.FindLock)
+}
+
+// findRef is ref, using find to find the stage ID given with --stage in the
+// stage cache.
+func (cmd *StageCmd) findRef(env *cmdEnv, kctx *kong.Context, find func(stage.Cache, string) (string, error)) (stageRef, error) {
 	if flagGiven(kctx, "root") {
 		return stageRef{}, errors.New("--root can only be used with 'stage new': the storage root is read from the stage")
 	}
@@ -102,7 +115,7 @@ func (cmd *StageCmd) ref(env *cmdEnv, kctx *kong.Context) (stageRef, error) {
 		if err != nil {
 			return stageRef{}, err
 		}
-		id, err := cache.Find(cmd.Stage)
+		id, err := find(cache, cmd.Stage)
 		if err != nil {
 			return stageRef{}, err
 		}
@@ -132,7 +145,7 @@ func (cmd *StageCmd) open(env *cmdEnv, kctx *kong.Context, openFn func(string) (
 	}
 	f, err := openFn(ref.path)
 	if err != nil {
-		return nil, stageRef{}, err
+		return nil, stageRef{}, lockedError(err, ref)
 	}
 	if cmd.CheckStat == "minimal" {
 		f.Stage().Compare = statcache.CompareMinimal
@@ -370,7 +383,8 @@ func (cmd *StageCommitCmd) revert(ctx context.Context, env *cmdEnv, root *ocfl.R
 
 // StageDeleteCmd is 'ocfl stage delete'.
 type StageDeleteCmd struct {
-	Force bool `name:"force" help:"Delete the stage even if a commit is in progress. The commit can't be resumed or reverted afterwards."`
+	Force bool `name:"force" xor:"delete-mode" help:"Delete the stage even if a commit is in progress. The commit can't be resumed or reverted afterwards."`
+	Lock  bool `name:"lock" xor:"delete-mode" help:"Only remove the stage's lock file, left behind by a command that was killed, and keep the stage."`
 }
 
 func (cmd *StageDeleteCmd) Help() string {
@@ -378,10 +392,22 @@ func (cmd *StageDeleteCmd) Help() string {
 progress can't be deleted: resume or revert the commit first. If neither is
 possible (for example, because the object was changed by something else),
 use --force. The object may be left partially updated: check it with 'ocfl
-validate'.`
+validate'.
+
+With --lock, the stage isn't deleted: only its lock file (the stage file's
+name with '.lock' appended) is removed, and what it recorded about the
+command that held the lock is printed. Use it to clear a lock left behind by
+a command that was killed, when commands that change the stage fail because
+it's locked. Removing the lock of a command that's still running lets another
+command change the stage at the same time, so check that no other ocfl
+command is using the stage first. --lock works even if the stage file
+doesn't exist or can't be read, and it can't be used with --force.`
 }
 
 func (cmd *StageDeleteCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context) (err error) {
+	if cmd.Lock {
+		return cmd.removeLock(env, parent, kctx)
+	}
 	f, ref, err := parent.loadLocked(env, kctx)
 	if err != nil {
 		return err
@@ -405,6 +431,28 @@ func (cmd *StageDeleteCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context
 		return nil
 	}
 	env.logger.Info("stage deleted", "object_id", s.ID(), "path", ref.path)
+	return nil
+}
+
+// removeLock removes the lock file of the stage named by --stage or --file.
+func (cmd *StageDeleteCmd) removeLock(env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
+	ref, err := parent.lockRef(env, kctx)
+	if err != nil {
+		return err
+	}
+	lock := stage.LockPath(ref.path)
+	holder, err := stage.RemoveLock(ref.path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		fmt.Fprintf(env.stdout, "the stage isn't locked: there's no lock file %s\n", lock)
+		return nil
+	case err != nil:
+		return err
+	}
+	if holder == "" {
+		holder = "unknown process"
+	}
+	fmt.Fprintf(env.stdout, "removed lock file %s (held by %s)\n", lock, holder)
 	return nil
 }
 
@@ -737,7 +785,10 @@ func (r stageRef) create(s *stage.Stage) (*stage.File, error) {
 	if errors.Is(err, fs.ErrExist) {
 		return nil, existingStageError(r)
 	}
-	return f, err
+	if err != nil {
+		return nil, lockedError(err, r)
+	}
+	return f, nil
 }
 
 // fileRef returns the stage file name, which is named with -f and its absolute
@@ -748,6 +799,16 @@ func fileRef(name string) (stageRef, error) {
 		return stageRef{}, err
 	}
 	return stageRef{path: abs, flags: []string{"-f", abs}}, nil
+}
+
+// lockedError adds to err, if it wraps [stage.ErrLocked], how to clear the
+// lock on the stage file ref. Otherwise, it returns err.
+func lockedError(err error, ref stageRef) error {
+	if !errors.Is(err, stage.ErrLocked) {
+		return err
+	}
+	return fmt.Errorf("%w\n  if no other ocfl command is using the stage, clear the lock: %s",
+		err, ref.command("delete", "--lock"))
 }
 
 // inProgressError returns an error saying that the commit of the frozen

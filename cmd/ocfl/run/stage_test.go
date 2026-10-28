@@ -634,19 +634,20 @@ func TestStage_Locked(t *testing.T) {
 		// the commands wait for the lock, so they run in parallel
 		t.Run("commands", func(t *testing.T) {
 			for _, tt := range []struct {
-				name string
-				args []string
-				lock string
+				name  string
+				args  []string
+				lock  string
+				stage string // the stage's ID in the command to clear the lock
 			}{
-				{"stage add", []string{"stage", "add", "-s", id, contentDir}, lockPath},
-				{"stage rm", []string{"stage", "rm", "-s", id, "folder1", "-r"}, lockPath},
-				{"stage commit", []string{"stage", "commit", "-s", id, "-m", "message", "-n", "name"}, lockPath},
-				{"stage commit --resume", []string{"stage", "commit", "-s", id, "--resume"}, lockPath},
-				{"stage commit --revert", []string{"stage", "commit", "-s", id, "--revert"}, lockPath},
-				{"stage delete", []string{"stage", "delete", "-s", id, "--force"}, lockPath},
+				{"stage add", []string{"stage", "add", "-s", id, contentDir}, lockPath, id},
+				{"stage rm", []string{"stage", "rm", "-s", id, "folder1", "-r"}, lockPath, id},
+				{"stage commit", []string{"stage", "commit", "-s", id, "-m", "message", "-n", "name"}, lockPath, id},
+				{"stage commit --resume", []string{"stage", "commit", "-s", id, "--resume"}, lockPath, id},
+				{"stage commit --revert", []string{"stage", "commit", "-s", id, "--revert"}, lockPath, id},
+				{"stage delete", []string{"stage", "delete", "-s", id, "--force"}, lockPath, id},
 				// creating the stage file fails
-				{"stage new", []string{"stage", "new", "--id", "object-02"}, newLockPath},
-				{"commit", []string{"commit", contentDir, "--id", "object-02", "-m", "message", "-n", "name"}, newLockPath},
+				{"stage new", []string{"stage", "new", "--id", "object-02"}, newLockPath, newID},
+				{"commit", []string{"commit", contentDir, "--id", "object-02", "-m", "message", "-n", "name"}, newLockPath, newID},
 			} {
 				t.Run(tt.name, func(t *testing.T) {
 					t.Parallel()
@@ -656,7 +657,7 @@ func TestStage_Locked(t *testing.T) {
 						}
 						be.In(t, "locked by another command (pid 1 on other-host)", stderr)
 						be.In(t, tt.lock+" exists", stderr)
-						be.In(t, "remove the lock file", stderr)
+						be.In(t, "\n  if no other ocfl command is using the stage, clear the lock: ocfl stage delete -s "+tt.stage+" --lock\n", stderr)
 						be.False(t, strings.Contains(stderr, "already exists"))
 					})
 				})
@@ -700,6 +701,139 @@ func TestStage_Locked(t *testing.T) {
 		runOK(t, env, "stage", "commit", "-s", id, "-m", "message", "-n", "name")
 		noLocks(t, stageCache)
 		be.Equal(t, 0, len(stageIDs(t, stageCache)))
+	})
+}
+
+// 'stage delete --lock' removes only the lock file of a stage, so that a lock
+// left behind by a command that was killed can be cleared.
+func TestStage_DeleteLock(t *testing.T) {
+	tmpDir, fixtures := testutil.TempDirTestData(t, `testdata/content-fixture`)
+	contentDir := fixtures[0]
+	stageCache := filepath.Join(tmpDir, "stage-cache")
+	env := map[string]string{
+		"OCFL_ROOT":        filepath.Join(tmpDir, "ocfl"),
+		"OCFL_STAGE_CACHE": stageCache,
+	}
+	runOK(t, env, "init-root", "--layout", "0003-hash-and-id-n-tuple-storage-layout")
+	id := strings.TrimSpace(runOK(t, env, "stage", "new", "--id", "object-01"))
+	stagePath := filepath.Join(stageCache, stageIDs(t, stageCache)[0]+".json")
+	lockPath := stagePath + ".lock"
+
+	// unchanged checks that the stage file has the contents before, and that
+	// it and dirFiles are the only files in its directory.
+	unchanged := func(t *testing.T, before []byte, dirFiles ...string) {
+		t.Helper()
+		after, err := os.ReadFile(stagePath)
+		be.NilErr(t, err)
+		be.Equal(t, string(before), string(after))
+		entries, err := os.ReadDir(stageCache)
+		be.NilErr(t, err)
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		be.AllEqual(t, append([]string{filepath.Base(stagePath)}, dirFiles...), names)
+	}
+
+	t.Run("stale lock", func(t *testing.T) {
+		before, err := os.ReadFile(stagePath)
+		be.NilErr(t, err)
+		be.NilErr(t, os.WriteFile(lockPath, []byte("pid 1 on other-host, since 2026-01-01T00:00:00Z\n"), 0o644))
+		var clear string
+		testutil.RunCLI([]string{"stage", "add", "-s", id, contentDir}, env, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, stage.ErrLocked))
+			clear = "ocfl stage delete -s " + id + " --lock"
+			be.In(t, "clear the lock: "+clear, stderr)
+		})
+		out := runOK(t, env, strings.Fields(clear)[1:]...)
+		be.Equal(t, "removed lock file "+lockPath+" (held by pid 1 on other-host, since 2026-01-01T00:00:00Z)\n", out)
+		unchanged(t, before)
+		// a later write succeeds
+		runOK(t, env, "stage", "add", "-s", id, contentDir)
+		noLocks(t, stageCache)
+		be.In(t, "hello.csv", runOK(t, env, "stage", "ls", "-s", id))
+	})
+
+	t.Run("held lock", func(t *testing.T) {
+		before, err := os.ReadFile(stagePath)
+		be.NilErr(t, err)
+		f, err := stage.OpenLocked(stagePath)
+		be.NilErr(t, err)
+		out := runOK(t, env, "stage", "delete", "-s", id, "--lock")
+		be.In(t, "removed lock file "+lockPath+fmt.Sprintf(" (held by pid %d on ", os.Getpid()), out)
+		unchanged(t, before)
+		// the command that held the lock can't release it
+		be.Nonzero(t, f.Close())
+	})
+
+	t.Run("unknown holder", func(t *testing.T) {
+		before, err := os.ReadFile(stagePath)
+		be.NilErr(t, err)
+		be.NilErr(t, os.WriteFile(lockPath, nil, 0o644))
+		out := runOK(t, env, "stage", "delete", "-f", stagePath, "--lock")
+		be.Equal(t, "removed lock file "+lockPath+" (held by unknown process)\n", out)
+		unchanged(t, before)
+	})
+
+	t.Run("no lock", func(t *testing.T) {
+		before, err := os.ReadFile(stagePath)
+		be.NilErr(t, err)
+		for _, args := range [][]string{
+			{"stage", "delete", "-s", id, "--lock"},
+			{"stage", "delete", "-f", stagePath, "--lock"},
+		} {
+			out := runOK(t, env, args...)
+			be.Equal(t, "the stage isn't locked: there's no lock file "+lockPath+"\n", out)
+		}
+		unchanged(t, before)
+	})
+
+	t.Run("lock without a stage file", func(t *testing.T) {
+		before, err := os.ReadFile(stagePath)
+		be.NilErr(t, err)
+		// a command creating a stage for another object was killed before it
+		// created the stage file
+		newID := strings.TrimSpace(runOK(t, env, "stage", "new", "--id", "object-02"))
+		var otherLock string
+		for _, other := range stageIDs(t, stageCache) {
+			if other+".json" != filepath.Base(stagePath) {
+				otherLock = filepath.Join(stageCache, other+".json.lock")
+			}
+		}
+		runOK(t, env, "stage", "delete", "-s", newID)
+		clear := "ocfl stage delete -s " + newID + " --lock"
+		be.NilErr(t, os.WriteFile(otherLock, []byte("pid 1 on other-host\n"), 0o644))
+		testutil.RunCLI([]string{"stage", "new", "--id", "object-02"}, env, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, stage.ErrLocked))
+			be.In(t, "clear the lock: "+clear, stderr)
+		})
+		out := runOK(t, env, strings.Fields(clear)[1:]...)
+		be.Equal(t, "removed lock file "+otherLock+" (held by pid 1 on other-host)\n", out)
+		unchanged(t, before)
+		runOK(t, env, "stage", "new", "--id", "object-02")
+		noLocks(t, stageCache)
+	})
+
+	t.Run("flags", func(t *testing.T) {
+		be.NilErr(t, os.WriteFile(lockPath, []byte("pid 1 on other-host\n"), 0o644))
+		defer os.Remove(lockPath)
+		testutil.RunCLI([]string{"stage", "delete", "-s", id, "--lock", "--force"}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "--force and --lock can't be used together", stderr)
+		})
+		testutil.RunCLI([]string{"stage", "delete", "--lock"}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "a stage is required", stderr)
+		})
+		testutil.RunCLI([]string{"stage", "delete", "-s", "zzzzzzz", "--lock"}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "no stage", stderr)
+		})
+		// the lock and the stage are kept
+		_, err := os.Stat(lockPath)
+		be.NilErr(t, err)
+		_, err = os.Stat(stagePath)
+		be.NilErr(t, err)
 	})
 }
 

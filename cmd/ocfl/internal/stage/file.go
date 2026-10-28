@@ -546,8 +546,7 @@ func lockedError(lock string, err error) error {
 	if readErr == nil && len(bytes.TrimSpace(b)) > 0 {
 		owner = string(bytes.TrimSpace(b))
 	}
-	return fmt.Errorf("%w (%s): %s exists; if no other ocfl command is using the stage, remove the lock file",
-		ErrLocked, owner, lock)
+	return fmt.Errorf("%w (%s): %s exists", ErrLocked, owner, lock)
 }
 
 // unlockFile releases a stage file's lock by removing its lock file, lock.
