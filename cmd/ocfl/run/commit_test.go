@@ -3,6 +3,7 @@ package run_test
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -152,6 +153,25 @@ func TestCommit(t *testing.T) {
 		runOK(t, env, "stage", "delete", "-s", ids[0], "--force")
 		be.Equal(t, 0, len(stageIDs(t, stageCache)))
 		be.Equal(t, "", runOK(t, env, "validate", "--id", id))
+	})
+
+	t.Run("no hidden keeps existing hidden files", func(t *testing.T) {
+		const id = "object-09"
+		dir := t.TempDir()
+		be.NilErr(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644))
+		be.NilErr(t, os.WriteFile(filepath.Join(dir, ".hidden"), []byte("h"), 0o644))
+		be.NilErr(t, os.WriteFile(filepath.Join(dir, ".gone"), []byte("g"), 0o644))
+		args := func(msg string, extra ...string) []string {
+			return append([]string{"commit", dir, "--id", id, "-m", msg, "-n", "Me", "-e", "me@example.net"}, extra...)
+		}
+		runOK(t, env, args("first commit")...)
+		be.NilErr(t, os.Remove(filepath.Join(dir, ".gone")))
+		be.NilErr(t, os.WriteFile(filepath.Join(dir, "b.txt"), []byte("b"), 0o644))
+		runOK(t, env, args("second commit", "--no-hidden")...)
+		be.Equal(t, "", runOK(t, env, "validate", "--id", id))
+		// the hidden file that still exists is kept, and the one that is
+		// missing is removed
+		be.Equal(t, ".hidden\na.txt\nb.txt\n", runOK(t, env, "ls", "--id", id))
 	})
 
 	t.Run("unchanged state", func(t *testing.T) {
