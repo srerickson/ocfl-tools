@@ -146,7 +146,7 @@ func (cmd *StageCmd) open(env *cmdEnv, kctx *kong.Context, openFn func(string) (
 	}
 	f, err := openFn(ref.path)
 	if err != nil {
-		return nil, stageRef{}, lockedError(err, ref)
+		return nil, stageRef{}, lockError(err, ref)
 	}
 	if cmd.CheckStat == "minimal" {
 		f.Stage().Compare = statcache.CompareMinimal
@@ -164,7 +164,8 @@ func (cmd *StageCmd) loadDraft(env *cmdEnv, kctx *kong.Context) (*stage.File, st
 	}
 	if f.Stage().Frozen() {
 		err := fmt.Errorf("the stage can't be changed: %w", inProgressError(f.Stage(), ref))
-		return nil, stageRef{}, errors.Join(err, f.Close())
+		closeStage(f, ref, &err)
+		return nil, stageRef{}, err
 	}
 	return f, ref, nil
 }
@@ -787,10 +788,19 @@ func (r stageRef) create(s *stage.Stage) (*stage.File, error) {
 		f, err = stage.Create(r.path, s)
 	}
 	if errors.Is(err, fs.ErrExist) {
-		return nil, existingStageError(r)
+		// the lock may not have been released
+		errs := []error{existingStageError(r)}
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			for _, e := range joined.Unwrap() {
+				if errors.Is(e, stage.ErrNotUnlocked) || errors.Is(e, stage.ErrLockBroken) {
+					errs = append(errs, lockError(e, r))
+				}
+			}
+		}
+		return nil, errors.Join(errs...)
 	}
 	if err != nil {
-		return nil, lockedError(err, r)
+		return nil, lockError(err, r)
 	}
 	return f, nil
 }
@@ -805,14 +815,24 @@ func fileRef(name string) (stageRef, error) {
 	return stageRef{path: abs, flags: []string{"-f", abs}}, nil
 }
 
-// lockedError adds to err, if it wraps [stage.ErrLocked], how to clear the
-// lock on the stage file ref. Otherwise, it returns err.
-func lockedError(err error, ref stageRef) error {
-	if !errors.Is(err, stage.ErrLocked) {
+// lockError adds to err what to do about the stage file lock error that it
+// wraps, if any, for the stage file ref: [stage.ErrLocked] (the stage is
+// locked by another command), [stage.ErrNotUnlocked] (this command couldn't
+// release its lock), or [stage.ErrLockBroken] (this command's lock was
+// removed while it held it). Otherwise, it returns err.
+func lockError(err error, ref stageRef) error {
+	var hint string
+	switch {
+	case errors.Is(err, stage.ErrLocked):
+		hint = "if no other ocfl command is using the stage, clear the lock: " + ref.clearLockCommand()
+	case errors.Is(err, stage.ErrNotUnlocked):
+		hint = "to clear the lock: " + ref.clearLockCommand()
+	case errors.Is(err, stage.ErrLockBroken):
+		hint = "another command may have changed the stage at the same time: check it with: " + ref.command("status")
+	default:
 		return err
 	}
-	return fmt.Errorf("%w\n  if no other ocfl command is using the stage, clear the lock: %s",
-		err, ref.clearLockCommand())
+	return fmt.Errorf("%w\n  %s", err, hint)
 }
 
 // clearLockCommand returns the command line that clears the lock on r's stage
@@ -957,15 +977,7 @@ func staleDraftGuidance(ref stageRef) []string {
 // and joins any error to *err, with what to do about it. It's deferred by
 // commands that lock a stage file.
 func closeStage(f *stage.File, ref stageRef, err *error) {
-	closeErr := f.Close()
-	switch {
-	case errors.Is(closeErr, stage.ErrLockBroken):
-		closeErr = fmt.Errorf("%w\n  another command may have changed the stage at the same time: check it with: %s",
-			closeErr, ref.command("status"))
-	case errors.Is(closeErr, stage.ErrNotUnlocked):
-		closeErr = fmt.Errorf("%w\n  to clear the lock: %s", closeErr, ref.clearLockCommand())
-	}
-	*err = errors.Join(*err, closeErr)
+	*err = errors.Join(*err, lockError(f.Close(), ref))
 }
 
 // checkWritable returns an error if root's storage can't be written, so a
