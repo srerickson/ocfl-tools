@@ -34,6 +34,7 @@ func TestCache(t *testing.T) {
 	// files that aren't stage files
 	for _, name := range []string{
 		"." + id3 + ".json.123",                 // temporary file from Write
+		id3 + ".json.lock",                      // lock file
 		"cccccccccccccccccccccccccccccccc.json", // too short
 		strings.ToUpper(id3) + ".json",
 		id3[:51] + "1.json", // not base32
@@ -88,6 +89,22 @@ func TestCache(t *testing.T) {
 		}
 	})
 
+	t.Run("List", func(t *testing.T) {
+		got, err := cache.List()
+		be.NilErr(t, err)
+		be.AllEqual(t, []stage.CacheEntry{
+			{ID: id1, ShortID: "aaaaaaaab"},
+			{ID: id2, ShortID: "aaaaaaaac"},
+			{ID: id3, ShortID: "bbbbbbb"},
+		}, got)
+	})
+
+	t.Run("List not a directory", func(t *testing.T) {
+		notDir := stage.Cache{Dir: cache.Path(id1)}
+		_, err := notDir.List()
+		be.Nonzero(t, err)
+	})
+
 	t.Run("missing directory", func(t *testing.T) {
 		missing := stage.Cache{Dir: filepath.Join(dir, "missing")}
 		_, err := missing.Find("a")
@@ -95,5 +112,8 @@ func TestCache(t *testing.T) {
 		short, err := missing.ShortID(id1)
 		be.NilErr(t, err)
 		be.Equal(t, id1[:7], short)
+		entries, err := missing.List()
+		be.NilErr(t, err)
+		be.Zero(t, len(entries))
 	})
 }
