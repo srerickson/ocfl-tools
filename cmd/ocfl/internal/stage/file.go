@@ -401,7 +401,12 @@ func (f *File) saveRefreshed() (err error) {
 	if f.lock != "" {
 		return f.Save()
 	}
-	lock, err := tryLock(f.path)
+	lock, busy, err := tryLock(f.path)
+	if busy {
+		// don't wait for the lock, or read the lock file: the other command
+		// may be removing it
+		return fmt.Errorf("%w: %v", ErrLocked, err)
+	}
 	if err != nil {
 		return err
 	}
@@ -441,37 +446,47 @@ func read(name string) (*File, error) {
 // refreshed records.
 var lockWait = time.Second
 
+const (
+	// unlockWait is how long unlockFile retries removing a lock file that's
+	// open in another process, which on Windows prevents removing it.
+	unlockWait = time.Second
+
+	// lockRetry is the delay between attempts to create or remove a lock
+	// file.
+	lockRetry = 50 * time.Millisecond
+)
+
 // lockFile locks the stage file name, waiting up to lockWait if it's locked,
 // and returns the lock file's name. If it's still locked, it returns an error
-// wrapping ErrLocked.
+// wrapping ErrLocked, which says what the lock file records. The lock file
+// is only read then, so waiting doesn't keep it open while its holder
+// removes it.
 func lockFile(name string) (string, error) {
 	deadline := time.Now().Add(lockWait)
 	for {
-		lock, err := tryLock(name)
-		if !errors.Is(err, ErrLocked) || time.Now().After(deadline) {
+		lock, busy, err := tryLock(name)
+		if !busy {
 			return lock, err
 		}
-		time.Sleep(50 * time.Millisecond)
+		if time.Now().After(deadline) {
+			return "", lockedError(name+".lock", err)
+		}
+		time.Sleep(lockRetry)
 	}
 }
 
-// tryLock locks the stage file name by creating its lock file, which records
-// the process that holds the lock, and returns the lock file's name. If the
-// lock file exists, it returns an error wrapping ErrLocked, which names the
-// lock file and what it records.
-func tryLock(name string) (string, error) {
-	lock := name + ".lock"
+// tryLock tries once to lock the stage file name by creating its lock file,
+// which records the process that holds the lock, and returns the lock file's
+// name. If another command holds the lock, or is releasing it, tryLock
+// returns busy, with the error from creating the lock file.
+func tryLock(name string) (lock string, busy bool, err error) {
+	lock = name + ".lock"
 	f, err := os.OpenFile(lock, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if errors.Is(err, fs.ErrExist) {
-		owner := "unknown process"
-		if b, err := os.ReadFile(lock); err == nil && len(bytes.TrimSpace(b)) > 0 {
-			owner = string(bytes.TrimSpace(b))
-		}
-		return "", fmt.Errorf("%w (%s): %s exists; if no other ocfl command is using the stage, remove the lock file",
-			ErrLocked, owner, lock)
-	}
 	if err != nil {
-		return "", fmt.Errorf("locking the stage file: %w", err)
+		if lockBusy(err) {
+			return "", true, err
+		}
+		return "", false, fmt.Errorf("locking the stage file: %w", err)
 	}
 	host, _ := os.Hostname()
 	_, err = fmt.Fprintf(f, "pid %d on %s, since %s\n", os.Getpid(), host, time.Now().Format(time.RFC3339))
@@ -480,17 +495,43 @@ func tryLock(name string) (string, error) {
 	}
 	if err != nil {
 		os.Remove(lock)
-		return "", fmt.Errorf("locking the stage file: %w", err)
+		return "", false, fmt.Errorf("locking the stage file: %w", err)
 	}
-	return lock, nil
+	return lock, false, nil
+}
+
+// lockedError returns the error for the stage file lock lock, which couldn't
+// be created because of err: an error wrapping ErrLocked, which names the lock
+// file and says what it records. If the lock file doesn't exist, the lock
+// wasn't held by another command, and lockedError returns err.
+func lockedError(lock string, err error) error {
+	b, readErr := os.ReadFile(lock)
+	if errors.Is(readErr, fs.ErrNotExist) && !errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("locking the stage file: %w", err)
+	}
+	owner := "unknown process"
+	if readErr == nil && len(bytes.TrimSpace(b)) > 0 {
+		owner = string(bytes.TrimSpace(b))
+	}
+	return fmt.Errorf("%w (%s): %s exists; if no other ocfl command is using the stage, remove the lock file",
+		ErrLocked, owner, lock)
 }
 
 // unlockFile releases a stage file's lock by removing its lock file, lock.
+// If the lock file is open in another process, which prevents removing it
+// on some systems, unlockFile retries for up to unlockWait.
 func unlockFile(lock string) error {
-	if err := os.Remove(lock); err != nil {
-		return fmt.Errorf("unlocking the stage file: %w; if no other ocfl command is using the stage, remove the lock file %s", err, lock)
+	deadline := time.Now().Add(unlockWait)
+	for {
+		err := os.Remove(lock)
+		if err == nil {
+			return nil
+		}
+		if !removeBusy(err) || time.Now().After(deadline) {
+			return fmt.Errorf("unlocking the stage file: %w; if no other ocfl command is using the stage, remove the lock file %s", err, lock)
+		}
+		time.Sleep(lockRetry)
 	}
-	return nil
 }
 
 // write writes s as JSON to a temporary file in name's directory, then calls
