@@ -130,8 +130,7 @@ func TestOpenLocked(t *testing.T) {
 		// another command can't lock the file
 		_, err = stage.OpenLocked(f.Path())
 		be.True(t, errors.Is(err, stage.ErrLocked))
-		be.In(t, lock, err.Error())
-		be.In(t, "remove the lock file", err.Error())
+		be.In(t, lock+" exists", err.Error())
 		be.In(t, fmt.Sprintf("pid %d", os.Getpid()), err.Error())
 		// but it can read it
 		got, err := stage.Open(f.Path())
@@ -209,6 +208,100 @@ func TestOpenLocked(t *testing.T) {
 		entries, err := os.ReadDir(dir)
 		be.NilErr(t, err)
 		be.Equal(t, 1, len(entries))
+	})
+}
+
+func TestRemoveLock(t *testing.T) {
+	stage.SetLockWait(t, 0)
+	root := newRoot(t)
+
+	// removed checks that the lock file of f was removed, and nothing else in
+	// its directory was changed: the stage file has its contents before.
+	removed := func(t *testing.T, f *stage.File, before []byte) {
+		t.Helper()
+		lockRemoved(t, f)
+		after, err := os.ReadFile(f.Path())
+		be.NilErr(t, err)
+		be.Equal(t, string(before), string(after))
+		entries, err := os.ReadDir(filepath.Dir(f.Path()))
+		be.NilErr(t, err)
+		be.Equal(t, 1, len(entries))
+	}
+
+	t.Run("held lock", func(t *testing.T) {
+		f := newFile(t, root, "ark:123/abc")
+		before, err := os.ReadFile(f.Path())
+		be.NilErr(t, err)
+		holder, err := stage.RemoveLock(f.Path())
+		be.NilErr(t, err)
+		be.In(t, fmt.Sprintf("pid %d on ", os.Getpid()), holder)
+		removed(t, f, before)
+		// the stage file can be locked again
+		locked, err := stage.OpenLocked(f.Path())
+		be.NilErr(t, err)
+		be.NilErr(t, locked.Close())
+	})
+
+	t.Run("stale lock", func(t *testing.T) {
+		f := newFile(t, root, "ark:123/abc")
+		be.NilErr(t, f.Close())
+		before, err := os.ReadFile(f.Path())
+		be.NilErr(t, err)
+		lock := stage.LockPath(f.Path())
+		be.NilErr(t, os.WriteFile(lock, []byte("pid 1 on other-host\n"), 0o644))
+		_, err = stage.OpenLocked(f.Path())
+		be.True(t, errors.Is(err, stage.ErrLocked))
+		holder, err := stage.RemoveLock(f.Path())
+		be.NilErr(t, err)
+		be.Equal(t, "pid 1 on other-host", holder)
+		removed(t, f, before)
+		// a later write succeeds
+		locked, err := stage.OpenLocked(f.Path())
+		be.NilErr(t, err)
+		be.NilErr(t, locked.Save())
+		be.NilErr(t, locked.Close())
+		lockRemoved(t, f)
+	})
+
+	t.Run("empty lock file", func(t *testing.T) {
+		f := newFile(t, root, "ark:123/abc")
+		be.NilErr(t, f.Close())
+		before, err := os.ReadFile(f.Path())
+		be.NilErr(t, err)
+		be.NilErr(t, os.WriteFile(stage.LockPath(f.Path()), nil, 0o644))
+		holder, err := stage.RemoveLock(f.Path())
+		be.NilErr(t, err)
+		be.Equal(t, "", holder)
+		removed(t, f, before)
+	})
+
+	t.Run("no lock", func(t *testing.T) {
+		f := newFile(t, root, "ark:123/abc")
+		be.NilErr(t, f.Close())
+		_, err := stage.RemoveLock(f.Path())
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+	})
+
+	t.Run("no stage file", func(t *testing.T) {
+		name := filepath.Join(t.TempDir(), "stage.json")
+		lock := stage.LockPath(name)
+		be.NilErr(t, os.WriteFile(lock, []byte("pid 1 on other-host\n"), 0o644))
+		holder, err := stage.RemoveLock(name)
+		be.NilErr(t, err)
+		be.Equal(t, "pid 1 on other-host", holder)
+		_, err = os.Stat(lock)
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+	})
+
+	t.Run("lock isn't a regular file", func(t *testing.T) {
+		name := filepath.Join(t.TempDir(), "stage.json")
+		lock := stage.LockPath(name)
+		be.NilErr(t, os.Mkdir(lock, 0o755))
+		_, err := stage.RemoveLock(name)
+		be.Nonzero(t, err)
+		be.False(t, errors.Is(err, fs.ErrNotExist))
+		_, err = os.Stat(lock)
+		be.NilErr(t, err)
 	})
 }
 

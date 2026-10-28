@@ -31,8 +31,9 @@ var (
 	ErrNotRemoved = errors.New("the commit is complete, but the stage file couldn't be removed")
 
 	// ErrLocked is returned when a stage file can't be locked because it's
-	// locked by another command: its lock file exists. The lock file is the
-	// stage file's name with ".lock" appended.
+	// locked by another command: its lock file exists. The lock file is
+	// [LockPath] of the stage file. If the command that held the lock was
+	// killed, the lock file is left behind: remove it with [RemoveLock].
 	ErrLocked = errors.New("the stage file is locked by another command")
 )
 
@@ -146,6 +147,38 @@ func Create(name string, s *Stage) (*File, error) {
 		return nil, errors.Join(err, unlockFile(lock))
 	}
 	return &File{path: name, stage: s, saved: b, lock: lock}, nil
+}
+
+// LockPath returns the name of the lock file of the stage file name: name
+// with ".lock" appended.
+func LockPath(name string) string { return name + ".lock" }
+
+// RemoveLock removes the lock file of the stage file name, releasing the lock
+// even if another command holds it. It's for clearing a lock left behind by a
+// command that was killed: removing the lock of a command that's still running
+// lets another command change the stage file at the same time. RemoveLock
+// returns what the lock file recorded about the command that held the lock,
+// or "" if it couldn't be read. If there's no lock file, it returns an error
+// wrapping [fs.ErrNotExist]. Nothing else is removed: if the lock file isn't
+// a regular file, RemoveLock returns an error without removing it. The stage
+// file isn't read or changed, and doesn't need to exist.
+func RemoveLock(name string) (holder string, err error) {
+	lock := LockPath(name)
+	info, err := os.Lstat(lock)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("can't remove the stage file lock: %s isn't a regular file", lock)
+	}
+	if b, err := os.ReadFile(lock); err == nil {
+		holder = string(bytes.TrimSpace(b))
+	}
+	if err := removeLockFile(lock); err != nil {
+		return "", fmt.Errorf("removing the stage file lock: %w", err)
+	}
+	syncDir(filepath.Dir(lock))
+	return holder, nil
 }
 
 // Path returns the path of the stage file.
@@ -447,7 +480,7 @@ func read(name string) (*File, error) {
 var lockWait = time.Second
 
 const (
-	// unlockWait is how long unlockFile retries removing a lock file that's
+	// unlockWait is how long removeLockFile retries removing a lock file that's
 	// open in another process, which on Windows prevents removing it.
 	unlockWait = time.Second
 
@@ -469,7 +502,7 @@ func lockFile(name string) (string, error) {
 			return lock, err
 		}
 		if time.Now().After(deadline) {
-			return "", lockedError(name+".lock", err)
+			return "", lockedError(LockPath(name), err)
 		}
 		time.Sleep(lockRetry)
 	}
@@ -480,7 +513,7 @@ func lockFile(name string) (string, error) {
 // name. If another command holds the lock, or is releasing it, tryLock
 // returns busy, with the error from creating the lock file.
 func tryLock(name string) (lock string, busy bool, err error) {
-	lock = name + ".lock"
+	lock = LockPath(name)
 	f, err := os.OpenFile(lock, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		if lockBusy(err) {
@@ -518,17 +551,22 @@ func lockedError(lock string, err error) error {
 }
 
 // unlockFile releases a stage file's lock by removing its lock file, lock.
-// If the lock file is open in another process, which prevents removing it
-// on some systems, unlockFile retries for up to unlockWait.
 func unlockFile(lock string) error {
+	if err := removeLockFile(lock); err != nil {
+		return fmt.Errorf("unlocking the stage file: %w; if no other ocfl command is using the stage, remove the lock file %s", err, lock)
+	}
+	return nil
+}
+
+// removeLockFile removes the lock file lock. If it's open in another
+// process, which prevents removing it on some systems, removeLockFile retries
+// for up to unlockWait.
+func removeLockFile(lock string) error {
 	deadline := time.Now().Add(unlockWait)
 	for {
 		err := os.Remove(lock)
-		if err == nil {
-			return nil
-		}
-		if !removeBusy(err) || time.Now().After(deadline) {
-			return fmt.Errorf("unlocking the stage file: %w; if no other ocfl command is using the stage, remove the lock file %s", err, lock)
+		if err == nil || !removeBusy(err) || time.Now().After(deadline) {
+			return err
 		}
 		time.Sleep(lockRetry)
 	}
