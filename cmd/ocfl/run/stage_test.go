@@ -565,8 +565,8 @@ func TestStage_CommitInterrupted(t *testing.T) {
 			be.True(t, errors.Is(err, context.Canceled))
 			be.In(t, "commit of "+objID+" ("+head+") was interrupted", stderr)
 			be.In(t, "object path: ", stderr)
-			be.In(t, "to resume: ocfl --root "+env["OCFL_ROOT"]+" stage commit -f "+stagePath+" --resume\n", stderr)
-			be.In(t, "to revert: ocfl --root "+env["OCFL_ROOT"]+" stage commit -f "+stagePath+" --revert", stderr)
+			be.In(t, "to resume: ocfl stage commit -f "+stagePath+" --resume\n", stderr)
+			be.In(t, "to revert: ocfl stage commit -f "+stagePath+" --revert", stderr)
 		})
 		s, err := stage.Read(stagePath)
 		be.NilErr(t, err)
@@ -801,6 +801,34 @@ func TestStage_CommitInterrupted(t *testing.T) {
 		be.In(t, "first commit", log)
 		be.False(t, strings.Contains(log, "second commit"))
 	})
+}
+
+// Stage files record their storage root, so only 'stage new' uses --root.
+func TestStage_Root(t *testing.T) {
+	tmpDir, fixtures := testutil.TempDirTestData(t, `testdata/content-fixture`)
+	rootPath := filepath.Join(tmpDir, "ocfl")
+	stagePath := filepath.Join(tmpDir, "stage.json")
+	env := map[string]string{"OCFL_ROOT": rootPath}
+	runOK(t, env, "init-root", "--layout", "0003-hash-and-id-n-tuple-storage-layout")
+	runOK(t, env, "--root", rootPath, "stage", "new", "-f", stagePath, "--id", "object-01")
+	runOK(t, env, "stage", "add", "-f", stagePath, fixtures[0])
+	status := runOK(t, env, "stage", "status", "-f", stagePath)
+	be.In(t, "storage root: file://"+filepath.ToSlash(rootPath)+"\n", status)
+	for _, args := range [][]string{
+		{"--root", rootPath, "stage", "ls", "-f", stagePath},
+		{"stage", "status", "-f", stagePath, "--root", rootPath},
+		{"--root", rootPath, "stage", "commit", "-f", stagePath, "-m", "message", "-n", "name"},
+	} {
+		testutil.RunCLI(args, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "--root can only be used with 'stage new'", stderr)
+		})
+	}
+	// the commit is to the storage root saved in the stage, not the one in
+	// $OCFL_ROOT
+	otherEnv := map[string]string{"OCFL_ROOT": filepath.Join(t.TempDir(), "missing")}
+	runOK(t, otherEnv, "stage", "commit", "-f", stagePath, "-m", "message", "-n", "name")
+	be.Equal(t, "", runOK(t, env, "validate", "--id", "object-01"))
 }
 
 // runOK runs the ocfl command with args, checks that it succeeds, and returns

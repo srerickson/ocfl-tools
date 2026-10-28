@@ -37,11 +37,11 @@ func (cmd *CommitCmd) Run(ctx context.Context, env *cmdEnv) error {
 	if err != nil {
 		return err
 	}
-	root, err := env.getRoot(ctx)
+	root, rootLoc, err := env.getRootLocation(ctx)
 	if err != nil {
 		return err
 	}
-	s, err := newStage(ctx, root, cmd.ID, alg)
+	s, err := newStage(ctx, root, rootLoc, cmd.ID, alg)
 	if err != nil {
 		return err
 	}
