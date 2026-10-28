@@ -204,7 +204,12 @@ func (f *File) Commit(ctx context.Context, root *ocfl.Root, msg string, user ocf
 
 // Resume finishes the interrupted commit of the frozen stage to the object
 // in root, using the saved version metadata, then removes the stage file. If
-// the stage is a draft, it returns [ErrNotFrozen]. If Resume returns an
+// the stage is a draft, it returns [ErrNotFrozen]. The staged files are
+// needed only if the commit isn't complete: if they aren't available, and it
+// isn't, Resume returns an error wrapping [ocfl.ErrMissingContent] (an
+// *[UnavailableError] if staged files have changed) without changing the
+// object. If the commit is complete, Resume removes the stage file even if
+// the staged files have changed. If Resume returns an
 // error, the stage is still frozen: the object may be partially updated. If
 // the error wraps [ocfl.ErrUpdateConflict], the object was changed by
 // something else after the commit was interrupted, and the commit can't be
@@ -217,6 +222,20 @@ func (f *File) Resume(ctx context.Context, root *ocfl.Root, logger *slog.Logger)
 		return ErrNotFrozen
 	}
 	content, closeContent, err := f.stage.localContent(ctx)
+	if errors.Is(err, ocfl.ErrMissingContent) {
+		// The commit may be complete, with the stage file left behind, so
+		// the staged files aren't needed. Apply with no content: if the
+		// commit is complete, it does nothing, and if it isn't, it fails
+		// without writing anything.
+		contentErr := err
+		if err := f.apply(ctx, root, nil, logger); err != nil {
+			if errors.Is(err, ocfl.ErrMissingContent) {
+				return contentErr
+			}
+			return err
+		}
+		return nil
+	}
 	if err != nil {
 		return err
 	}

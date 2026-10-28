@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -379,9 +380,50 @@ func TestFile_Resume(t *testing.T) {
 		be.NilErr(t, os.Remove(filepath.Join(dir, "a.txt")))
 		err := f.Resume(ctx, writable, nil)
 		be.True(t, errors.Is(err, ocfl.ErrMissingContent))
-		// the commit is still in progress
+		var unavailable *stage.UnavailableError
+		be.True(t, errors.As(err, &unavailable))
+		be.AllEqual(t, []string{"a.txt"}, unavailable.Paths)
+		// the commit is still in progress, and the object wasn't changed
 		be.True(t, savedStage(t, f).Frozen())
+		objPath, err := writable.ResolveID("ark:123/abc")
+		be.NilErr(t, err)
+		_, err = ocflfs.ReadDir(ctx, writable.FS(), path.Join(writable.Path(), objPath, "v2"))
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+		obj, err := writable.NewObject(ctx, "ark:123/abc")
+		be.NilErr(t, err)
+		be.Equal(t, ocfl.V(1), obj.Head())
 	})
+
+	// the commit is complete, but the stage file wasn't removed, and the
+	// staged files changed afterwards: they aren't needed to resume it
+	for _, tt := range []struct {
+		desc   string
+		change func(name string) error
+	}{
+		{"staged file deleted", os.Remove},
+		{"staged file modified", func(name string) error {
+			return os.WriteFile(name, []byte("changed"), 0o644)
+		}},
+	} {
+		t.Run("complete, "+tt.desc, func(t *testing.T) {
+			root, fsys := newHookRoot(t)
+			dir := writeFiles(t, map[string]string{"a.txt": "a"})
+			f := newFile(t, root, "ark:123/abc")
+			be.NilErr(t, f.Stage().AddDir(ctx, dir, nil))
+			lock, unlock := testutil.LockDir(t, filepath.Dir(f.Path()))
+			fsys.beforeWrite = sync.OnceFunc(lock)
+			be.True(t, errors.Is(f.Commit(ctx, root, "message", user, nil), stage.ErrNotRemoved))
+			unlock()
+			be.NilErr(t, tt.change(filepath.Join(dir, "a.txt")))
+			saved, err := stage.Open(f.Path())
+			be.NilErr(t, err)
+			be.NilErr(t, saved.Resume(ctx, root, nil))
+			stageFileRemoved(t, f)
+			obj, err := root.NewObject(ctx, "ark:123/abc")
+			be.NilErr(t, err)
+			be.Equal(t, ocfl.V(2), obj.Head())
+		})
+	}
 }
 
 func TestFile_Revert(t *testing.T) {
