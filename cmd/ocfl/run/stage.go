@@ -990,27 +990,48 @@ func staleDraftGuidance(ref stageRef) []string {
 // commands that lock a stage file.
 //
 // done describes the command's work if it's finished when the stage file is
-// gone, such as a commit, or it's empty. If the command succeeded, the stage
-// file is gone, and its lock was removed by another command (see
-// [stage.RemoveLock]), closeStage logs a warning instead of returning an
-// error: the stage file was removed while the command held the lock, so
-// there's nothing for another command to have changed.
+// gone, such as a commit, or it's empty. If the command succeeded, but the
+// lock can't be released, the error starts with done, so the work isn't done
+// again. If the stage file is gone, and its lock was removed by another
+// command (see [stage.RemoveLock]), closeStage logs a warning instead of
+// returning an error: the stage file was removed while the command held the
+// lock, so there's nothing for another command to have changed.
 func closeStage(env *cmdEnv, f *stage.File, ref stageRef, done string, err *error) {
 	closeErr := f.Close()
-	if done != "" && *err == nil && errors.Is(closeErr, stage.ErrLockBroken) {
-		if _, statErr := os.Lstat(ref.path); errors.Is(statErr, fs.ErrNotExist) {
-			env.logger.Warn(done+", but another command cleared the stage's lock while this one held it",
-				"path", ref.path, "error", closeErr)
-			return
+	switch {
+	case closeErr == nil:
+		return
+	case done != "" && *err == nil:
+		if errors.Is(closeErr, stage.ErrLockBroken) {
+			if _, statErr := os.Lstat(ref.path); errors.Is(statErr, fs.ErrNotExist) {
+				lockGone(env, ref, done, closeErr)
+				return
+			}
 		}
-	}
-	if errors.Is(closeErr, stage.ErrLockBroken) && *err != nil &&
-		strings.Contains((*err).Error(), lockBrokenHint(ref)) {
+		*err = fmt.Errorf("%s, but %w", done, lockError(closeErr, ref))
+	case errors.Is(closeErr, stage.ErrLockBroken) && *err != nil &&
+		strings.Contains((*err).Error(), lockBrokenHint(ref)):
 		// *err already says what to do
 		*err = errors.Join(*err, closeErr)
+	default:
+		*err = errors.Join(*err, lockError(closeErr, ref))
+	}
+}
+
+// lockGone logs a warning that the work done is finished, but the lock on the
+// stage file ref, which was removed, wasn't the one the command created, as
+// Close's error closeErr says.
+func lockGone(env *cmdEnv, ref stageRef, done string, closeErr error) {
+	// the lock file name is the stage file's name with ".lock" appended
+	if _, err := os.Lstat(ref.path + ".lock"); err == nil {
+		// the lock file may be this command's, if it couldn't be checked,
+		// or another command's
+		env.logger.Warn(done+", but the stage's lock couldn't be released; if no other ocfl command is using the stage, clear the lock: "+ref.clearLockCommand(),
+			"path", ref.path, "error", closeErr)
 		return
 	}
-	*err = errors.Join(*err, lockError(closeErr, ref))
+	env.logger.Warn(done+", but another command cleared the stage's lock while this one held it",
+		"path", ref.path, "error", closeErr)
 }
 
 // checkWritable returns an error if root's storage can't be written, so a

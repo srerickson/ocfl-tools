@@ -928,6 +928,43 @@ func TestStage_DeleteLock(t *testing.T) {
 		be.Equal(t, "", runOK(t, env, "validate", "--id", "object-04"))
 	})
 
+	// The lock of a finished command is removed, and another command locks
+	// the stage before it finishes: it only warns, with how to clear the
+	// lock.
+	t.Run("lock replaced after the stage is deleted", func(t *testing.T) {
+		otherID := strings.TrimSpace(runOK(t, env, "stage", "new", "--id", "object-05"))
+		var otherLock string
+		replaceLock := func() {
+			out := runOK(t, env, "stage", "delete", "-s", otherID, "--lock")
+			otherLock = strings.Fields(out)[3]
+			be.NilErr(t, os.WriteFile(otherLock, []byte("pid 1 on other-host\n"), 0o644))
+		}
+		testutil.RunCLIOnLog(context.Background(), []string{"stage", "delete", "-s", otherID}, env, "stage deleted", replaceLock, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.In(t, "the stage was deleted, but the stage's lock couldn't be released; if no other ocfl command is using the stage, clear the lock: ocfl stage delete -s "+otherID+" --lock", stderr)
+		})
+		be.NilErr(t, os.Remove(otherLock))
+		noLocks(t, stageCache)
+	})
+
+	// The lock of a finished command is removed, and another command
+	// creates the stage again before it finishes: the error says that the
+	// work is done.
+	t.Run("stage created again after the stage is deleted", func(t *testing.T) {
+		otherID := strings.TrimSpace(runOK(t, env, "stage", "new", "--id", "object-06"))
+		createAgain := func() {
+			runOK(t, env, "stage", "delete", "-s", otherID, "--lock")
+			runOK(t, env, "stage", "new", "--id", "object-06")
+		}
+		testutil.RunCLIOnLog(context.Background(), []string{"stage", "delete", "-s", otherID}, env, "stage deleted", createAgain, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, stage.ErrLockBroken))
+			be.In(t, "the stage was deleted, but the stage file's lock was removed while the command held it", stderr)
+			be.In(t, "check it with: ocfl stage status -s "+otherID+"\n", stderr)
+		})
+		noLocks(t, stageCache)
+		runOK(t, env, "stage", "delete", "-s", otherID)
+	})
+
 	// The lock of a resumed commit is removed while the staged files are
 	// checked: the object isn't changed.
 	t.Run("lock removed before resume updates the object", func(t *testing.T) {
