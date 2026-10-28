@@ -238,6 +238,26 @@ only the size, modification time (in whole seconds), and mode:
 ocfl stage --check-stat=minimal status -s <stage-id>
 ```
 
+### Changes to the object
+
+`ocfl stage status` also reads the storage root to check whether the object
+has changed since the stage was created (for example, because another version
+was committed, or the object was deleted). The result is on the `upstream:`
+line. A stale stage can't be committed, so status exits with an error that
+says to delete the stage. For a stage with an interrupted commit, status
+reports whether the commit is complete; if it is, `--resume` only removes the
+stage file, and the staged files aren't needed.
+
+Status also exits with an error if the check fails, for example because the
+storage root can't be read. Use `--offline` to skip the check:
+
+```sh
+ocfl stage status -s <stage-id> --offline
+```
+
+The check is a snapshot: the object isn't locked, so it may still change
+before the stage is committed.
+
 ### Interrupted commits
 
 `ocfl commit` and `ocfl stage commit` save the new version state in a stage
