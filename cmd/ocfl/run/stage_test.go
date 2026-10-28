@@ -1035,7 +1035,7 @@ func TestStage_StatusChangedFiles(t *testing.T) {
 	// setup creates a stage for a new object with the files in a new
 	// directory. a.txt and b.txt have the same content.
 	setup := func(t *testing.T) (env map[string]string, stagePath, dir string) {
-		tmpDir := t.TempDir()
+		tmpDir := testutil.TempDir(t)
 		dir = filepath.Join(tmpDir, "content")
 		be.NilErr(t, os.Mkdir(dir, 0755))
 		for name, data := range map[string]string{"a.txt": "same", "b.txt": "same", "c.txt": "other"} {

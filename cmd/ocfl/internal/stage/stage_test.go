@@ -923,7 +923,7 @@ func newStage(t *testing.T, root *ocfl.Root, id string) *stage.Stage {
 // returns the directory.
 func writeFiles(t *testing.T, files map[string]string) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testutil.TempDir(t)
 	for name, data := range files {
 		be.NilErr(t, os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644))
 	}
