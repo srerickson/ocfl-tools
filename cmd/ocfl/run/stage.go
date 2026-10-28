@@ -8,7 +8,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"text/tabwriter"
+	"unicode"
 
 	"github.com/alecthomas/kong"
 	"github.com/srerickson/ocfl-go"
@@ -37,6 +40,7 @@ type StageCmd struct {
 	New    NewStageCmd    `cmd:"" help:"Create a new stage for preparing updates to an object"`
 	Rm     StageRmCmd     `cmd:"" help:"Remove a file or directory from the stage"`
 	Status StageStatusCmd `cmd:"" help:"Show stage details and report any errors"`
+	Stages StageStagesCmd `cmd:"" default:"1" hidden:"" help:"List stages in the stage cache"`
 }
 
 func (cmd *StageCmd) Help() string {
@@ -52,6 +56,9 @@ stage's ID, and the other commands take the ID, or a unique prefix of it,
 with -s. To save a stage somewhere else, use -f with a file path instead.
 Only 'stage new' uses --root: the other commands read the storage root from
 the stage.
+
+Run 'ocfl stage' with no sub-command to list the stages in the stage cache,
+with their short IDs, object IDs, and storage roots.
 
     ocfl stage new --id my-object
     ocfl stage add -s <stage-id> my-files/
@@ -483,6 +490,62 @@ func (cmd *StageStatusCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCm
 	return checkStagedFiles(ctx, env, f)
 }
 
+// StageStagesCmd is 'ocfl stage' with no sub-command: it lists the stages in
+// the stage cache, in stage ID order, one per line, with the stage's short ID,
+// object ID, and storage root location. -s, -f, --root and --check-stat are
+// ignored. A stage file that can't be read is reported on stderr, and the
+// command returns an error after listing the others.
+//
+// An object ID or storage root location with a control character (such as a
+// tab or newline) is printed quoted, with %q, so it can't break the rows and
+// columns. The output is for people: a quoted value can't be told apart from
+// one that has quotes in it.
+type StageStagesCmd struct{}
+
+func (cmd *StageStagesCmd) Run(env *cmdEnv, parent *StageCmd) error {
+	cache, err := parent.cache(env)
+	if err != nil {
+		return err
+	}
+	entries, err := cache.List()
+	if err != nil {
+		return err
+	}
+	tw := tabwriter.NewWriter(env.stdout, 0, 0, 2, ' ', 0)
+	var bad int
+	for _, e := range entries {
+		path := cache.Path(e.ID)
+		f, err := stage.Open(path)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			// removed since it was listed: committed or deleted
+			continue
+		case err != nil:
+			bad++
+			env.logger.Error(fmt.Sprintf("can't read stage %s: %v%s", e.ShortID, err, unreadableStageHint(path)))
+			continue
+		}
+		s := f.Stage()
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", e.ShortID, tableCell(s.ID()), tableCell(s.Root()))
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if bad > 0 {
+		return fmt.Errorf("%d of %d stage files can't be read", bad, len(entries))
+	}
+	return nil
+}
+
+// tableCell returns v for a cell in a table row: quoted if it has a control
+// character, which could break the table's rows and columns.
+func tableCell(v string) string {
+	if strings.ContainsFunc(v, unicode.IsControl) {
+		return strconv.Quote(v)
+	}
+	return v
+}
+
 // stageCacheFlag is the --stage-cache flag of commands that save stages in the
 // stage cache.
 type stageCacheFlag struct {
@@ -538,7 +601,7 @@ func (f stageCacheFlag) cacheRef(kctx *kong.Context, cache stage.Cache, id strin
 func existingStageError(ref stageRef) error {
 	f, err := stage.Open(ref.path)
 	if err != nil {
-		return fmt.Errorf("stage file already exists, but it can't be read: %w\n  to start over, remove the stage file: %s", err, ref.path)
+		return fmt.Errorf("stage file already exists, but it can't be read: %w%s", err, unreadableStageHint(ref.path))
 	}
 	s := f.Stage()
 	if s.Frozen() {
@@ -546,6 +609,12 @@ func existingStageError(ref stageRef) error {
 	}
 	return fmt.Errorf("a stage for %s already exists: %s\n  to see it: %s\n  to delete it: %s",
 		s.ID(), ref.path, ref.command("status"), ref.command("delete"))
+}
+
+// unreadableStageHint returns the text, starting with a newline, that says how
+// to recover from the stage file at path that can't be read.
+func unreadableStageHint(path string) string {
+	return "\n  to start over, remove the stage file: " + path
 }
 
 // stageRef is a stage file and the flags that name it in 'ocfl stage'

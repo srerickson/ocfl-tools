@@ -9,6 +9,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1133,6 +1135,154 @@ func TestStage_Delete(t *testing.T) {
 		testutil.RunCLI([]string{"stage", "status", "-s", id}, env, func(err error, stdout, stderr string) {
 			be.Nonzero(t, err)
 			be.In(t, "no stage with ID", stderr)
+		})
+	})
+}
+
+func TestStage_List(t *testing.T) {
+	// setup creates two storage roots and a stage cache, which doesn't exist
+	// yet. $OCFL_ROOT is the first storage root.
+	setup := func(t *testing.T) (env map[string]string, cache stage.Cache, roots [2]string, contentDir string) {
+		tmpDir, fixtures := testutil.TempDirTestData(t, `testdata/content-fixture`)
+		cache = stage.Cache{Dir: filepath.Join(tmpDir, "stage-cache")}
+		for i := range roots {
+			roots[i] = filepath.Join(tmpDir, "root-"+strconv.Itoa(i))
+			rootEnv := map[string]string{"OCFL_ROOT": roots[i]}
+			runOK(t, rootEnv, "init-root", "--layout", "0003-hash-and-id-n-tuple-storage-layout")
+		}
+		env = map[string]string{
+			"OCFL_ROOT":        roots[0],
+			"OCFL_STAGE_CACHE": cache.Dir,
+		}
+		return env, cache, roots, fixtures[0]
+	}
+	// newStage creates a stage for the object id in the storage root and
+	// returns its short ID.
+	newStage := func(t *testing.T, env map[string]string, root, id string) string {
+		t.Helper()
+		rootEnv := maps.Clone(env)
+		rootEnv["OCFL_ROOT"] = root
+		return strings.TrimSpace(runOK(t, rootEnv, "stage", "new", "--id", id))
+	}
+	rootLoc := func(root string) string { return "file://" + filepath.ToSlash(root) }
+	// checkRows checks that out has a row for each stage in want, in order,
+	// with aligned columns and no trailing spaces.
+	checkRows := func(t *testing.T, out string, want ...[3]string) {
+		t.Helper()
+		lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+		be.Equal(t, len(want), len(lines))
+		for i, line := range lines {
+			be.Equal(t, strings.TrimRight(line, " \t"), line)
+			be.AllEqual(t, want[i][:], strings.Fields(line))
+			// columns start at the same offsets as in the first row
+			be.Equal(t, strings.Index(lines[0], want[0][1]), strings.Index(line, want[i][1]))
+			be.Equal(t, strings.Index(lines[0], want[0][2]), strings.Index(line, want[i][2]))
+		}
+	}
+	// sortRows sorts rows by the stage IDs in cache that their short IDs
+	// start.
+	sortRows := func(t *testing.T, cache stage.Cache, rows ...[3]string) [][3]string {
+		t.Helper()
+		var sorted [][3]string
+		for _, id := range stageIDs(t, cache.Dir) {
+			for _, row := range rows {
+				if strings.HasPrefix(id, row[0]) {
+					sorted = append(sorted, row)
+				}
+			}
+		}
+		be.Equal(t, len(rows), len(sorted))
+		return sorted
+	}
+
+	t.Run("empty", func(t *testing.T) {
+		env, cache, _, _ := setup(t)
+		be.Equal(t, "", runOK(t, env, "stage"))
+		be.NilErr(t, os.MkdirAll(cache.Dir, 0o755))
+		be.Equal(t, "", runOK(t, env, "stage"))
+	})
+
+	t.Run("stages", func(t *testing.T) {
+		env, cache, roots, _ := setup(t)
+		rows := sortRows(t, cache,
+			[3]string{newStage(t, env, roots[0], "obj-a"), "obj-a", rootLoc(roots[0])},
+			[3]string{newStage(t, env, roots[1], "longer-object-b"), "longer-object-b", rootLoc(roots[1])},
+		)
+		out := runOK(t, env, "stage")
+		checkRows(t, out, rows...)
+		// files in the stage cache that aren't stage files aren't listed
+		id := stageIDs(t, cache.Dir)[0]
+		for _, name := range []string{"." + id + ".json.123", id + ".json.lock"} {
+			be.NilErr(t, os.WriteFile(filepath.Join(cache.Dir, name), []byte("{}"), 0o644))
+		}
+		be.Equal(t, out, runOK(t, env, "stage"))
+		// --root, -s and -f are ignored
+		be.Equal(t, out, runOK(t, env, "stage", "--root", filepath.Join(t.TempDir(), "x")))
+		be.Equal(t, out, runOK(t, env, "stage", "-s", "zzzzzzz"))
+		be.Equal(t, out, runOK(t, env, "stage", "-f", filepath.Join(t.TempDir(), "stage.json")))
+		// the short IDs name the stages
+		for _, row := range rows {
+			status := runOK(t, env, "stage", "status", "-s", row[0])
+			be.In(t, "object:       "+row[1]+" ", status)
+		}
+	})
+
+	t.Run("commit in progress", func(t *testing.T) {
+		env, cache, roots, contentDir := setup(t)
+		frozen := newStage(t, env, roots[0], "obj-a")
+		draft := newStage(t, env, roots[0], "obj-b")
+		runOK(t, env, "stage", "add", "-s", frozen, contentDir)
+		commit := []string{"stage", "commit", "-s", frozen, "-m", "message", "-n", "name", "-e", "a@b.c"}
+		testutil.RunCLIInterrupt(commit, env, "starting object update", func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, context.Canceled))
+		})
+		checkRows(t, runOK(t, env, "stage"), sortRows(t, cache,
+			[3]string{frozen, "obj-a", rootLoc(roots[0])},
+			[3]string{draft, "obj-b", rootLoc(roots[0])},
+		)...)
+	})
+
+	t.Run("unreadable stage", func(t *testing.T) {
+		for name, content := range map[string]string{
+			"invalid json": "{",
+			"empty":        "",
+		} {
+			t.Run(name, func(t *testing.T) {
+				env, cache, roots, _ := setup(t)
+				good := newStage(t, env, roots[0], "obj-a")
+				badID := strings.Repeat("c", len(stageIDs(t, cache.Dir)[0]))
+				be.NilErr(t, os.WriteFile(cache.Path(badID), []byte(content), 0o644))
+				testutil.RunCLI([]string{"stage"}, env, func(err error, stdout, stderr string) {
+					be.Nonzero(t, err)
+					be.In(t, "1 of 2 stage files can't be read", err.Error())
+					checkRows(t, stdout, [3]string{good, "obj-a", rootLoc(roots[0])})
+					be.In(t, "can't read stage "+badID[:7], stderr)
+					be.In(t, "to start over, remove the stage file: "+cache.Path(badID), stderr)
+				})
+			})
+		}
+	})
+
+	t.Run("no default stage cache", func(t *testing.T) {
+		switch runtime.GOOS {
+		case "windows", "darwin", "ios", "plan9":
+			t.Skip("the user's cache directory isn't set by $XDG_CACHE_HOME or $HOME")
+		}
+		env, _, _, _ := setup(t)
+		delete(env, "OCFL_STAGE_CACHE")
+		testutil.RunCLI([]string{"stage"}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.In(t, "set --stage-cache or $OCFL_STAGE_CACHE", stderr)
+			be.Equal(t, "", stdout)
+		})
+	})
+
+	t.Run("help", func(t *testing.T) {
+		testutil.RunCLI([]string{"stage", "--help"}, nil, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			be.In(t, "Run 'ocfl stage' with no sub-command to list the stages", stdout)
+			be.In(t, "stage ls ", stdout)
+			be.False(t, strings.Contains(stdout, "stage stages"))
 		})
 	})
 }
