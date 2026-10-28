@@ -224,6 +224,46 @@ func TestOpenLocked(t *testing.T) {
 	})
 }
 
+func TestReadLock(t *testing.T) {
+	root := newRoot(t)
+
+	t.Run("held lock", func(t *testing.T) {
+		f := newFile(t, root, "ark:123/abc")
+		info, err := stage.ReadLock(f.Path())
+		be.NilErr(t, err)
+		be.Equal(t, f.Path()+".lock", info.Path)
+		be.True(t, strings.HasPrefix(info.Holder, fmt.Sprintf("pid %d on ", os.Getpid())))
+		be.False(t, strings.Contains(info.Holder, "\n"))
+		// the lock isn't changed
+		be.NilErr(t, f.Close())
+		lockRemoved(t, f)
+	})
+
+	t.Run("no lock", func(t *testing.T) {
+		f := newFile(t, root, "ark:123/abc")
+		be.NilErr(t, f.Close())
+		info, err := stage.ReadLock(f.Path())
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+		be.Equal(t, f.Path()+".lock", info.Path)
+	})
+
+	t.Run("empty lock file", func(t *testing.T) {
+		name := filepath.Join(t.TempDir(), "stage.json")
+		be.NilErr(t, os.WriteFile(name+".lock", nil, 0o644))
+		info, err := stage.ReadLock(name)
+		be.NilErr(t, err)
+		be.Equal(t, "", info.Holder)
+	})
+
+	t.Run("lock isn't a regular file", func(t *testing.T) {
+		name := filepath.Join(t.TempDir(), "stage.json")
+		be.NilErr(t, os.Mkdir(name+".lock", 0o755))
+		info, err := stage.ReadLock(name)
+		be.NilErr(t, err)
+		be.Equal(t, "", info.Holder)
+	})
+}
+
 func TestRemoveLock(t *testing.T) {
 	stage.SetLockWait(t, 0)
 	root := newRoot(t)
