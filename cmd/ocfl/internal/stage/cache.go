@@ -124,8 +124,8 @@ func (c Cache) List() ([]CacheEntry, error) {
 }
 
 // ids returns the IDs of the stage files in c. Other files, such as temporary
-// files from [File.Save], are ignored. If c's directory doesn't exist, there are
-// no stage files.
+// files from [File.Save] and lock files, are ignored. If c's directory doesn't
+// exist, there are no stage files.
 func (c Cache) ids() ([]string, error) {
 	entries, err := os.ReadDir(c.Dir)
 	if err != nil {
