@@ -6,7 +6,6 @@ accessing, updating, and removing objects in an OCFL storage root. Multiple
 storage backends are supported, including the local filesystem, S3, and http
 (read-only).
 
-
 ## Installation
 
 Using [Homebrew](https://brew.sh/) on MacOS:
@@ -32,7 +31,7 @@ page](https://github.com/srerickson/ocfl-tools/releases)
 The `ocfl` command includes a collection of subcommands for different
 operations. Use `ocfl --help` to see a list of available subcommands:
 
-```
+```text
 Usage: ocfl <command> [flags]
 
 command line tool for working with OCFL repositories
@@ -68,8 +67,8 @@ Run "ocfl <command> --help" for more information on a command.
 
 To work with objects using their IDs, you need to specify an OCFL storage root.
 (The storage must also define a storage root layout). You can configure the
-storage root location using the `$OCFL_ROOT` environment variable or by setting it
-explicitly with the `--root` flag, used by most commands. 
+storage root location using the `$OCFL_ROOT` environment variable or by setting
+it explicitly with the `--root` flag, used by most commands.
 
 ```sh
 # configure storage root using an environment variable
@@ -83,7 +82,7 @@ ocfl log --root /mnt/data/my-root --id ark://abc/123
 #### Object paths
 
 Many commands accepts an `--object` flag that allows you to specify an object
-using its full path, rather than its  ID. This is helpful, for example, if the
+using its full path, rather than its ID. This is helpful, for example, if the
 storage root's layout isn't defined, isn't known, or if the object isn't part of
 a storage root. The object path supports multiple protocols:
 
@@ -115,7 +114,8 @@ To use S3-based storage, the storage root or object path should have the format:
 ocfl ls --root s3://my-bucket/my-root
 ```
 
-The S3 client can be configured using AWS configuration files (e.g., `~/.aws/credentials`) or environment variables:
+The S3 client can be configured using AWS configuration files (e.g.,
+`~/.aws/credentials`) or environment variables:
 
 ```sh
 export AWS_ENDPOINT_URL="..."
@@ -125,7 +125,9 @@ export AWS_SECRET_ACCESS_KEY="..."
 ```
 
 Additional S3 configuration options:
-- `OCFL_S3_PATHSTYLE=true`: enables [path-style S3 requests](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html#path-style-access)
+
+- `OCFL_S3_PATHSTYLE=true`: enables
+  [path-style S3 requests](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html#path-style-access)
 
 The region, endpoint, and path-style setting can also be given as query
 parameters in the location, which take precedence over the environment:
@@ -133,7 +135,8 @@ parameters in the location, which take precedence over the environment:
 
 #### Read objects using HTTP
 
-For read-only access to OCFL objects over http, you can use the URL of the object's root directory.
+For read-only access to OCFL objects over http, you can use the URL of the
+object's root directory.
 
 ```sh
 ocfl ls --object https://dreamlab-public.s3.us-west-2.amazonaws.com/ocfl/content-fixtures
@@ -142,7 +145,7 @@ ocfl ls --object https://dreamlab-public.s3.us-west-2.amazonaws.com/ocfl/content
 ### Creating a Storage Root
 
 Use `ocfl init-root` to create a new storage root. A root path must be set with
-`$OCFL_ROOT`, or `--root`. 
+`$OCFL_ROOT`, or `--root`.
 
 ```sh
 # create a new storage root using s3
@@ -168,11 +171,11 @@ descriptions of each.
 Layouts are initialized with default configuration settings. If you need to
 change the layout's configuration, you must manually edit the layout's
 `config.json` file. It's very important to do this *before* adding objects to
-the storage root! 
+the storage root!
 
 Some layouts do not have valid default configurations
 (e.g.,`0006-flat-omit-prefix-storage-layout`). In these cases, you *must*
-manually update the `config.json` before using the storage root. 
+manually update the `config.json` before using the storage root.
 
 The command `ocfl info` will report errors if the storage root's layout
 configuration is invalid.
