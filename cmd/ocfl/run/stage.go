@@ -214,7 +214,7 @@ func (cmd *NewStageCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, 
 	if err != nil {
 		return err
 	}
-	defer closeStage(f, &err)
+	defer closeStage(f, ref, &err)
 	if ref.shortID == "" {
 		env.logger.Info("stage file created", "path", ref.path, "object_id", s.ID(), "object_version", s.NextHead())
 		return nil
@@ -234,11 +234,11 @@ type StageAddCmd struct {
 }
 
 func (cmd *StageAddCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) (err error) {
-	f, _, err := parent.loadDraft(env, kctx)
+	f, ref, err := parent.loadDraft(env, kctx)
 	if err != nil {
 		return err
 	}
-	defer closeStage(f, &err)
+	defer closeStage(f, ref, &err)
 	s := f.Stage()
 	absPath, err := filepath.Abs(cmd.Path)
 	if err != nil {
@@ -298,7 +298,7 @@ func (cmd *StageCommitCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCm
 	if err != nil {
 		return err
 	}
-	defer closeStage(f, &err)
+	defer closeStage(f, ref, &err)
 	s := f.Stage()
 	root, err := env.openRoot(ctx, s.Root())
 	if err != nil {
@@ -412,7 +412,7 @@ func (cmd *StageDeleteCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context
 	if err != nil {
 		return err
 	}
-	defer closeStage(f, &err)
+	defer closeStage(f, ref, &err)
 	s := f.Stage()
 	if cmd.Force {
 		err = f.Discard()
@@ -440,19 +440,19 @@ func (cmd *StageDeleteCmd) removeLock(env *cmdEnv, parent *StageCmd, kctx *kong.
 	if err != nil {
 		return err
 	}
-	lock := stage.LockPath(ref.path)
-	holder, err := stage.RemoveLock(ref.path)
+	info, err := stage.RemoveLock(ref.path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		fmt.Fprintf(env.stdout, "the stage isn't locked: there's no lock file %s\n", lock)
+		fmt.Fprintf(env.stdout, "the stage isn't locked: there's no lock file %s\n", info.Path)
 		return nil
 	case err != nil:
 		return err
 	}
+	holder := info.Holder
 	if holder == "" {
 		holder = "unknown process"
 	}
-	fmt.Fprintf(env.stdout, "removed lock file %s (held by %s)\n", lock, holder)
+	fmt.Fprintf(env.stdout, "removed lock file %s (held by %s)\n", info.Path, holder)
 	return nil
 }
 
@@ -514,11 +514,11 @@ type StageRmCmd struct {
 }
 
 func (cmd *StageRmCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context) (err error) {
-	f, _, err := parent.loadDraft(env, kctx)
+	f, ref, err := parent.loadDraft(env, kctx)
 	if err != nil {
 		return err
 	}
-	defer closeStage(f, &err)
+	defer closeStage(f, ref, &err)
 	if err := f.Stage().Remove(cmd.Path, cmd.Recursive, env.logger); err != nil {
 		return err
 	}
@@ -808,7 +808,13 @@ func lockedError(err error, ref stageRef) error {
 		return err
 	}
 	return fmt.Errorf("%w\n  if no other ocfl command is using the stage, clear the lock: %s",
-		err, ref.command("delete", "--lock"))
+		err, ref.clearLockCommand())
+}
+
+// clearLockCommand returns the command line that clears the lock on r's stage
+// file.
+func (r stageRef) clearLockCommand() string {
+	return r.command("delete", "--lock")
 }
 
 // inProgressError returns an error saying that the commit of the frozen
@@ -932,10 +938,19 @@ func staleDraftGuidance(ref stageRef) []string {
 		"  to delete it: " + ref.command("delete")}
 }
 
-// closeStage closes the stage file f, releasing its lock, and joins any error
-// to *err. It's deferred by commands that lock a stage file.
-func closeStage(f *stage.File, err *error) {
-	*err = errors.Join(*err, f.Close())
+// closeStage closes the stage file f, which ref names, releasing its lock,
+// and joins any error to *err, with what to do about it. It's deferred by
+// commands that lock a stage file.
+func closeStage(f *stage.File, ref stageRef, err *error) {
+	closeErr := f.Close()
+	switch {
+	case errors.Is(closeErr, stage.ErrLockBroken):
+		closeErr = fmt.Errorf("%w\n  another command may have changed the stage at the same time: check it with: %s",
+			closeErr, ref.command("status"))
+	case errors.Is(closeErr, stage.ErrNotUnlocked):
+		closeErr = fmt.Errorf("%w\n  to clear the lock: %s", closeErr, ref.clearLockCommand())
+	}
+	*err = errors.Join(*err, closeErr)
 }
 
 // checkWritable returns an error if root's storage can't be written, so a

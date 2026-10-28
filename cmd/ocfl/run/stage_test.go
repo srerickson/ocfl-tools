@@ -814,6 +814,35 @@ func TestStage_DeleteLock(t *testing.T) {
 		noLocks(t, stageCache)
 	})
 
+	// the lock of a running command is cleared, and another command locks
+	// the stage before the first one finishes
+	t.Run("broken lock", func(t *testing.T) {
+		var other *stage.File
+		breakLock := func() {
+			runOK(t, env, "stage", "delete", "-s", id, "--lock")
+			var err error
+			other, err = stage.OpenLocked(stagePath)
+			be.NilErr(t, err)
+		}
+		newDir := t.TempDir()
+		be.NilErr(t, os.WriteFile(filepath.Join(newDir, "new.txt"), []byte("new"), 0o644))
+		args := []string{"stage", "add", "-s", id, newDir}
+		testutil.RunCLIOnLog(context.Background(), args, env, "file added", breakLock, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, stage.ErrLockBroken))
+			be.In(t, "lock was removed while the command held it", stderr)
+			be.In(t, "\n  another command may have changed the stage at the same time: check it with: ocfl stage status -s "+id+"\n", stderr)
+		})
+		be.True(t, other != nil)
+		// the other command's lock is kept
+		_, err := os.Stat(lockPath)
+		be.NilErr(t, err)
+		testutil.RunCLI([]string{"stage", "rm", "-s", id, "hello.csv"}, env, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, stage.ErrLocked))
+		})
+		be.NilErr(t, other.Close())
+		noLocks(t, stageCache)
+	})
+
 	t.Run("flags", func(t *testing.T) {
 		be.NilErr(t, os.WriteFile(lockPath, []byte("pid 1 on other-host\n"), 0o644))
 		defer os.Remove(lockPath)
@@ -1225,8 +1254,8 @@ func TestStage_CommitInterrupted(t *testing.T) {
 			be.In(t, "\n  to delete it: ocfl stage delete -f "+stagePath+" --force\n", stderr)
 			be.False(t, strings.Contains(stderr, "can't be resumed or reverted"))
 			// the lock can't be released either
-			be.In(t, "unlocking the stage file: ", stderr)
-			be.In(t, "remove the lock file "+stagePath+".lock", stderr)
+			be.In(t, "the stage file's lock couldn't be released: ", stderr)
+			be.In(t, "\n  to clear the lock: ocfl stage delete -f "+stagePath+" --lock\n", stderr)
 		})
 		unlock()
 		removeStaleLock(t, filepath.Dir(stagePath))
@@ -1244,7 +1273,7 @@ func TestStage_CommitInterrupted(t *testing.T) {
 			be.In(t, "commit of "+objID+" (v1): the commit is complete, but the stage file couldn't be removed: ", stderr)
 			be.Equal(t, 1, strings.Count(stderr, "couldn't be removed"))
 			be.In(t, "to remove it: ocfl stage commit -f "+stagePath+" --resume\n", stderr)
-			be.In(t, "unlocking the stage file: ", stderr)
+			be.In(t, "the stage file's lock couldn't be released: ", stderr)
 		})
 		unlock()
 		removeStaleLock(t, filepath.Dir(stagePath))
@@ -1264,7 +1293,7 @@ func TestStage_CommitInterrupted(t *testing.T) {
 			be.In(t, "revert of "+objID+" (v1): the commit was reverted, but the stage file couldn't be saved: ", stderr)
 			be.In(t, "don't resume it", stderr)
 			be.In(t, "to finish reverting: ocfl stage commit -f "+stagePath+" --revert\n", stderr)
-			be.In(t, "unlocking the stage file: ", stderr)
+			be.In(t, "the stage file's lock couldn't be released: ", stderr)
 		})
 		unlock()
 		removeStaleLock(t, filepath.Dir(stagePath))

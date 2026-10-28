@@ -156,7 +156,7 @@ func (c Cache) idsWithSuffix(suffix string) ([]string, error) {
 
 // lockIDs returns the IDs of the stages in c that have a lock file.
 func (c Cache) lockIDs() ([]string, error) {
-	return c.idsWithSuffix(LockPath(".json"))
+	return c.idsWithSuffix(lockPath(".json"))
 }
 
 // find returns the ID in ids that starts with prefix. It returns an error if
