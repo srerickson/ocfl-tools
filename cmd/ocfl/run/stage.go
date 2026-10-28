@@ -23,7 +23,10 @@ import (
 // StageCmd is 'ocfl stage': commands for preparing and committing object
 // updates.
 type StageCmd struct {
-	File      string `name:"file" short:"f" default:"ocfl-stage.json" help:"path to stage file"`
+	stageCacheFlag `embed:""`
+
+	Stage     string `name:"stage" short:"s" xor:"stage" help:"ID of a stage in the stage cache, or a unique prefix of it"`
+	File      string `name:"file" short:"f" xor:"stage" help:"path to a stage file, used instead of the stage cache"`
 	CheckStat string `name:"check-stat" enum:"default,minimal" default:"default" ocflenv:"OCFL_CHECK_STAT" help:"file metadata compared to find staged files that haven't changed: 'default' or 'minimal' (size, mtime in seconds, and mode; for network file systems)"`
 
 	Add    StageAddCmd    `cmd:"" help:"Add a file or directory to the stage"`
@@ -37,17 +40,23 @@ type StageCmd struct {
 }
 
 func (cmd *StageCmd) Help() string {
-	return `A stage file records changes to an object that can be committed as a new
+	return `A stage records changes to an object that can be committed as a new
 version. Create one with 'stage new', change it with 'stage add' and 'stage
-rm', and commit it with 'stage commit', which removes the stage file. Staged
+rm', and commit it with 'stage commit', which removes the stage. Staged
 content is digested when it's added, but it isn't copied until the stage is
-committed. Only 'stage new' uses --root: the other commands read the storage
-root from the stage file.
+committed.
+
+Stages are saved in the stage cache directory (--stage-cache), which has at
+most one stage for each object in a storage root. 'stage new' prints the new
+stage's ID, and the other commands take the ID, or a unique prefix of it,
+with -s. To save a stage somewhere else, use -f with a file path instead.
+Only 'stage new' uses --root: the other commands read the storage root from
+the stage.
 
     ocfl stage new --id my-object
-    ocfl stage add my-files/
-    ocfl stage rm old-file.txt
-    ocfl stage commit -m "update data" -n "My Name" -e me@example.net
+    ocfl stage add -s <stage-id> my-files/
+    ocfl stage rm -s <stage-id> old-file.txt
+    ocfl stage commit -s <stage-id> -m "update data" -n "My Name" -e me@example.net
 
 The stage file records each staged file's metadata (size, modification
 time, inode, and so on), like git's index. 'stage status' and 'stage add'
@@ -56,26 +65,40 @@ only read staged files whose metadata has changed. On network file systems
 --check-stat=minimal to compare only the size, modification time in whole
 seconds, and mode.
 
-If a commit is interrupted, the stage file is kept. Run 'stage commit
---resume' to finish the commit, or 'stage commit --revert' to undo the
-partial update and return the stage to its uncommitted state. 'stage delete'
-deletes a stage that hasn't been committed.`
+If a commit is interrupted, the stage is kept. Run 'stage commit --resume'
+to finish the commit, or 'stage commit --revert' to undo the partial update
+and return the stage to its uncommitted state. 'stage delete' deletes a
+stage that hasn't been committed.`
 }
 
-// ref returns the stage file named by --file. It returns an error if --root
-// was given on the command line: commands other than 'stage new' use the
-// storage root saved in the stage.
-func (cmd *StageCmd) ref(kctx *kong.Context) (stageRef, error) {
+// ref returns the stage file named by --stage or --file. It returns an error
+// if neither is set, or if --root was given on the command line: commands
+// other than 'stage new' use the storage root saved in the stage.
+func (cmd *StageCmd) ref(env *cmdEnv, kctx *kong.Context) (stageRef, error) {
 	if flagGiven(kctx, "root") {
 		return stageRef{}, errors.New("--root can only be used with 'stage new': the storage root is read from the stage")
 	}
-	return fileRef(cmd.File)
+	switch {
+	case cmd.File != "":
+		return fileRef(cmd.File)
+	case cmd.Stage != "":
+		cache, err := cmd.cache(env)
+		if err != nil {
+			return stageRef{}, err
+		}
+		id, err := cache.Find(cmd.Stage)
+		if err != nil {
+			return stageRef{}, err
+		}
+		return cmd.cacheRef(kctx, cache, id)
+	}
+	return stageRef{}, errors.New("a stage is required: use --stage (-s) with a stage ID or --file (-f) with a stage file")
 }
 
-// load opens the stage file named by --file, and returns it with the flags
-// that name it.
-func (cmd *StageCmd) load(kctx *kong.Context) (*stage.File, stageRef, error) {
-	ref, err := cmd.ref(kctx)
+// load opens the stage file named by --stage or --file, and returns it with
+// the flags that name it.
+func (cmd *StageCmd) load(env *cmdEnv, kctx *kong.Context) (*stage.File, stageRef, error) {
+	ref, err := cmd.ref(env, kctx)
 	if err != nil {
 		return nil, stageRef{}, err
 	}
@@ -92,8 +115,8 @@ func (cmd *StageCmd) load(kctx *kong.Context) (*stage.File, stageRef, error) {
 // loadDraft is like load, but it returns an error if the stage is frozen for
 // a commit, which must be resumed or reverted before the stage can be
 // changed.
-func (cmd *StageCmd) loadDraft(kctx *kong.Context) (*stage.File, stageRef, error) {
-	f, ref, err := cmd.load(kctx)
+func (cmd *StageCmd) loadDraft(env *cmdEnv, kctx *kong.Context) (*stage.File, stageRef, error) {
+	f, ref, err := cmd.load(env, kctx)
 	if err != nil {
 		return nil, stageRef{}, err
 	}
@@ -109,7 +132,17 @@ type NewStageCmd struct {
 	ID  string `name:"id" short:"i" required:"" help:"object id for the new stage"`
 }
 
-func (cmd *NewStageCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd) error {
+func (cmd *NewStageCmd) Help() string {
+	return `Creates a stage for the object in the storage root (--root) and prints its
+stage ID. The stage is saved in the stage cache, or in the file given with
+-f. There can only be one stage for an object in the stage cache: if one
+exists, commit or delete it first.`
+}
+
+func (cmd *NewStageCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
+	if parent.Stage != "" {
+		return errors.New("--stage (-s) can't be used with 'stage new': the stage ID is set from the storage root and object ID")
+	}
 	alg, err := digest.DefaultRegistry().Get(cmd.Alg)
 	if err != nil {
 		return err
@@ -118,7 +151,12 @@ func (cmd *NewStageCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd) 
 	if err != nil {
 		return err
 	}
-	ref, err := fileRef(parent.File)
+	var ref stageRef
+	if parent.File != "" {
+		ref, err = fileRef(parent.File)
+	} else {
+		ref, err = parent.objectRef(env, kctx, rootLoc, cmd.ID)
+	}
 	if err != nil {
 		return err
 	}
@@ -133,7 +171,12 @@ func (cmd *NewStageCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd) 
 	if _, err := ref.create(s); err != nil {
 		return err
 	}
-	env.logger.Info("stage file created", "path", ref.path, "object_id", s.ID(), "object_version", s.NextHead())
+	if ref.shortID == "" {
+		env.logger.Info("stage file created", "path", ref.path, "object_id", s.ID(), "object_version", s.NextHead())
+		return nil
+	}
+	env.logger.Info("stage created", "stage", ref.shortID, "object_id", s.ID(), "object_version", s.NextHead(), "path", ref.path)
+	fmt.Fprintln(env.stdout, ref.shortID)
 	return nil
 }
 
@@ -147,7 +190,7 @@ type StageAddCmd struct {
 }
 
 func (cmd *StageAddCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
-	f, _, err := parent.loadDraft(kctx)
+	f, _, err := parent.loadDraft(env, kctx)
 	if err != nil {
 		return err
 	}
@@ -206,7 +249,7 @@ deleted. The commit is to the storage root saved in the stage.`
 }
 
 func (cmd *StageCommitCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
-	f, ref, err := parent.load(kctx)
+	f, ref, err := parent.load(env, kctx)
 	if err != nil {
 		return err
 	}
@@ -307,7 +350,7 @@ validate'.`
 }
 
 func (cmd *StageDeleteCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
-	f, ref, err := parent.load(kctx)
+	f, ref, err := parent.load(env, kctx)
 	if err != nil {
 		return err
 	}
@@ -338,7 +381,7 @@ type StageDiffCmd struct {
 }
 
 func (cmd *StageDiffCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
-	f, _, err := parent.load(kctx)
+	f, _, err := parent.load(env, kctx)
 	if err != nil {
 		return err
 	}
@@ -375,7 +418,7 @@ type StageListCmd struct {
 }
 
 func (cmd *StageListCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
-	f, _, err := parent.load(kctx)
+	f, _, err := parent.load(env, kctx)
 	if err != nil {
 		return err
 	}
@@ -390,7 +433,7 @@ type StageRmCmd struct {
 }
 
 func (cmd *StageRmCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
-	f, _, err := parent.loadDraft(kctx)
+	f, _, err := parent.loadDraft(env, kctx)
 	if err != nil {
 		return err
 	}
@@ -413,7 +456,7 @@ error.`
 }
 
 func (cmd *StageStatusCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
-	f, ref, err := parent.load(kctx)
+	f, ref, err := parent.load(env, kctx)
 	if err != nil {
 		return err
 	}
@@ -440,6 +483,56 @@ func (cmd *StageStatusCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCm
 	return checkStagedFiles(ctx, env, f)
 }
 
+// stageCacheFlag is the --stage-cache flag of commands that save stages in the
+// stage cache.
+type stageCacheFlag struct {
+	StageCache string `name:"stage-cache" ocflenv:"OCFL_STAGE_CACHE" help:"directory for saved stages. Default: 'ocfl-tools/stage' in the user's cache directory"`
+}
+
+// cache returns the stage cache: the --stage-cache directory, or by default,
+// 'ocfl-tools/stage' in the user's cache directory.
+func (f stageCacheFlag) cache(env *cmdEnv) (stage.Cache, error) {
+	dir := f.StageCache
+	if dir == "" {
+		base, err := env.userCacheDir()
+		if err != nil {
+			return stage.Cache{}, fmt.Errorf("finding the default stage cache: %w; set --stage-cache or $OCFL_STAGE_CACHE", err)
+		}
+		dir = filepath.Join(base, "ocfl-tools", "stage")
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return stage.Cache{}, err
+	}
+	return stage.Cache{Dir: abs}, nil
+}
+
+// objectRef returns the stage file in the stage cache for the object id in the
+// storage root at the location rootLoc.
+func (f stageCacheFlag) objectRef(env *cmdEnv, kctx *kong.Context, rootLoc, id string) (stageRef, error) {
+	cache, err := f.cache(env)
+	if err != nil {
+		return stageRef{}, err
+	}
+	return f.cacheRef(kctx, cache, stage.ID(rootLoc, id))
+}
+
+// cacheRef returns the stage file for the stage ID id in cache. The stage is
+// named by a short ID in commands, with --stage-cache if it was given on the
+// command line.
+func (f stageCacheFlag) cacheRef(kctx *kong.Context, cache stage.Cache, id string) (stageRef, error) {
+	short, err := cache.ShortID(id)
+	if err != nil {
+		return stageRef{}, err
+	}
+	var flags []string
+	if flagGiven(kctx, "stage-cache") {
+		flags = append(flags, "--stage-cache", cache.Dir)
+	}
+	flags = append(flags, "-s", short)
+	return stageRef{path: cache.Path(id), flags: flags, cache: cache, id: id, shortID: short}, nil
+}
+
 // existingStageError returns the error for creating a stage when the stage
 // file ref already exists.
 func existingStageError(ref stageRef) error {
@@ -460,6 +553,11 @@ func existingStageError(ref stageRef) error {
 type stageRef struct {
 	path  string
 	flags []string
+
+	// if the stage file is in the stage cache:
+	cache   stage.Cache
+	id      string // stage ID
+	shortID string // the stage ID's shortest unique prefix, used in commands
 }
 
 // command returns the command line for the 'ocfl stage' subcommand sub, using
@@ -485,7 +583,13 @@ func (r stageRef) checkNew() error {
 // create saves s in r's stage file, which must not exist: if it does, the
 // error says how to see or delete the existing stage.
 func (r stageRef) create(s *stage.Stage) (*stage.File, error) {
-	f, err := stage.Create(r.path, s)
+	var f *stage.File
+	var err error
+	if r.id != "" {
+		f, err = r.cache.Create(r.id, s)
+	} else {
+		f, err = stage.Create(r.path, s)
+	}
 	if errors.Is(err, fs.ErrExist) {
 		return nil, existingStageError(r)
 	}
