@@ -57,28 +57,32 @@ func (c Cache) Create(id string, s *Stage) (*File, error) {
 // Find returns the ID of the stage file in c whose ID starts with prefix. It
 // returns an error if there isn't exactly one.
 func (c Cache) Find(prefix string) (string, error) {
-	if prefix == "" {
-		return "", errors.New("empty stage ID")
-	}
 	ids, err := c.ids()
 	if err != nil {
 		return "", err
 	}
-	var found []string
-	for _, id := range ids {
-		if strings.HasPrefix(id, prefix) {
-			found = append(found, id)
+	return c.find(prefix, ids)
+}
+
+// FindLock is like [Cache.Find], but it also finds stages that have a lock
+// file but no stage file, such as one left behind by a command that was
+// killed before it created the stage file, so that the lock can be removed
+// with [RemoveLock].
+func (c Cache) FindLock(prefix string) (string, error) {
+	ids, err := c.ids()
+	if err != nil {
+		return "", err
+	}
+	locks, err := c.lockIDs()
+	if err != nil {
+		return "", err
+	}
+	for _, id := range locks {
+		if !slices.Contains(ids, id) {
+			ids = append(ids, id)
 		}
 	}
-	switch len(found) {
-	case 0:
-		return "", fmt.Errorf("no stage with ID %q in %s", prefix, c.Dir)
-	case 1:
-		return found[0], nil
-	default:
-		return "", fmt.Errorf("stage ID %q is ambiguous: it matches %d stages in %s: %s",
-			prefix, len(found), c.Dir, strings.Join(found, ", "))
-	}
+	return c.find(prefix, ids)
 }
 
 // ShortID returns the shortest prefix of the stage ID id, with at least seven
@@ -127,6 +131,12 @@ func (c Cache) List() ([]CacheEntry, error) {
 // files from [File.Save] and lock files, are ignored. If c's directory doesn't
 // exist, there are no stage files.
 func (c Cache) ids() ([]string, error) {
+	return c.idsWithSuffix(".json")
+}
+
+// idsWithSuffix returns the stage IDs of the regular files in c named by a
+// stage ID followed by suffix. If c's directory doesn't exist, there are none.
+func (c Cache) idsWithSuffix(suffix string) ([]string, error) {
 	entries, err := os.ReadDir(c.Dir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -136,12 +146,40 @@ func (c Cache) ids() ([]string, error) {
 	}
 	var ids []string
 	for _, e := range entries {
-		id, ok := strings.CutSuffix(e.Name(), ".json")
+		id, ok := strings.CutSuffix(e.Name(), suffix)
 		if ok && e.Type().IsRegular() && validID(id) {
 			ids = append(ids, id)
 		}
 	}
 	return ids, nil
+}
+
+// lockIDs returns the IDs of the stages in c that have a lock file.
+func (c Cache) lockIDs() ([]string, error) {
+	return c.idsWithSuffix(LockPath(".json"))
+}
+
+// find returns the ID in ids that starts with prefix. It returns an error if
+// there isn't exactly one.
+func (c Cache) find(prefix string, ids []string) (string, error) {
+	if prefix == "" {
+		return "", errors.New("empty stage ID")
+	}
+	var found []string
+	for _, id := range ids {
+		if strings.HasPrefix(id, prefix) {
+			found = append(found, id)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return "", fmt.Errorf("no stage with ID %q in %s", prefix, c.Dir)
+	case 1:
+		return found[0], nil
+	default:
+		return "", fmt.Errorf("stage ID %q is ambiguous: it matches %d stages in %s: %s",
+			prefix, len(found), c.Dir, strings.Join(found, ", "))
+	}
 }
 
 // shortID returns the shortest prefix of id, with at least seven characters,

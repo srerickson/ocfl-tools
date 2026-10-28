@@ -25,6 +25,8 @@ func TestCache(t *testing.T) {
 		id1 = "aaaaaaaab" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		id2 = "aaaaaaaac" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		id3 = "bbbbbbbbb" + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		// a stage with a lock file but no stage file
+		id4 = "ddddddddd" + "ddddddddddddddddddddddddddddddddddddddddddd"
 	)
 	dir := t.TempDir()
 	cache := stage.Cache{Dir: dir}
@@ -35,6 +37,7 @@ func TestCache(t *testing.T) {
 	for _, name := range []string{
 		"." + id3 + ".json.123",                 // temporary file from Write
 		id3 + ".json.lock",                      // lock file
+		id4 + ".json.lock",                      // lock file without a stage file
 		"cccccccccccccccccccccccccccccccc.json", // too short
 		strings.ToUpper(id3) + ".json",
 		id3[:51] + "1.json", // not base32
@@ -72,6 +75,33 @@ func TestCache(t *testing.T) {
 			be.NilErr(t, err)
 			be.Equal(t, tt.want, got)
 		}
+	})
+
+	t.Run("FindLock", func(t *testing.T) {
+		for _, tt := range []struct {
+			prefix  string
+			want    string
+			wantErr string
+		}{
+			{prefix: "d", want: id4},
+			{prefix: "b", want: id3},
+			{prefix: "aaaaaaaab", want: id1},
+			{prefix: "aaaaaaaa", wantErr: "ambiguous"},
+			{prefix: "c", wantErr: "no stage"},
+			{prefix: "", wantErr: "empty"},
+		} {
+			got, err := cache.FindLock(tt.prefix)
+			if tt.wantErr != "" {
+				be.Nonzero(t, err)
+				be.In(t, tt.wantErr, err.Error())
+				continue
+			}
+			be.NilErr(t, err)
+			be.Equal(t, tt.want, got)
+		}
+		// Find doesn't find the stage without a stage file
+		_, err := cache.Find("d")
+		be.In(t, "no stage", err.Error())
 	})
 
 	t.Run("ShortID", func(t *testing.T) {
