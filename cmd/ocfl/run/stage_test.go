@@ -3,6 +3,7 @@ package run_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"maps"
@@ -419,6 +420,7 @@ func TestStage_Status(t *testing.T) {
 			be.NilErr(t, err)
 			be.In(t, newID+" (v1)", stdout)
 			be.In(t, "stage has changes", stdout)
+			be.In(t, "\nupstream:     stage head matches upstream object\n", stdout)
 		})
 		// report errors
 		be.NilErr(t, os.Remove(filepath.Join(contentFixture, "hello.csv")))
@@ -429,6 +431,126 @@ func TestStage_Status(t *testing.T) {
 			be.In(t, "missing:  hello.csv ("+filepath.Join(contentFixture, "hello.csv")+")", stdout)
 			be.In(t, "the stage can't be committed", stderr)
 			be.In(t, "hello.csv", stderr)
+		})
+	})
+}
+
+// 'stage status' checks whether the object has changed in the storage root
+// since the stage was created.
+func TestStage_StatusUpstream(t *testing.T) {
+	const objID = "ark:xyz/678"
+	// setup creates a storage root and a directory of files to commit. If
+	// versions isn't zero, it commits that many versions of the object.
+	// Then it creates a stage for the object with a new file.
+	setup := func(t *testing.T, versions int) (env map[string]string, stagePath, dir string) {
+		tmpDir := t.TempDir()
+		dir = filepath.Join(tmpDir, "content")
+		be.NilErr(t, os.Mkdir(dir, 0o755))
+		be.NilErr(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644))
+		env = map[string]string{"OCFL_ROOT": filepath.Join(tmpDir, "ocfl")}
+		runOK(t, env, "init-root", "--layout", "0003-hash-and-id-n-tuple-storage-layout")
+		for i := range versions {
+			commitVersion(t, env, objID, fmt.Sprintf("version %d", i+1))
+		}
+		stagePath = filepath.Join(tmpDir, "stage.json")
+		runOK(t, env, "stage", "new", "-f", stagePath, "--id", objID)
+		staged := filepath.Join(tmpDir, "staged.txt")
+		be.NilErr(t, os.WriteFile(staged, []byte("staged"), 0o644))
+		runOK(t, env, "stage", "add", "-f", stagePath, staged)
+		return env, stagePath, dir
+	}
+	statusArgs := func(stagePath string) []string {
+		return []string{"stage", "status", "-f", stagePath}
+	}
+	// stale checks the result of 'stage status' for a stale draft stage,
+	// with the upstream line line.
+	stale := func(t *testing.T, stagePath, line string) func(err error, stdout, stderr string) {
+		return func(err error, stdout, stderr string) {
+			t.Helper()
+			be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
+			be.In(t, "\nupstream:     "+line+"\n", stdout)
+			be.In(t, "the stage for "+objID+" ", stderr)
+			be.In(t, "is stale: the object has changed since the stage was created", stderr)
+			be.In(t, "the stage can't be committed: delete it and create a new one", stderr)
+			be.In(t, "to delete it: ocfl stage delete -f "+stagePath+"\n", stderr)
+		}
+	}
+
+	t.Run("unchanged", func(t *testing.T) {
+		env, stagePath, _ := setup(t, 1)
+		out := runOK(t, env, statusArgs(stagePath)...)
+		be.In(t, "\nupstream:     stage head matches upstream object\n", out)
+		be.False(t, strings.Contains(out, "stale"))
+	})
+
+	t.Run("new version committed", func(t *testing.T) {
+		env, stagePath, _ := setup(t, 1)
+		commitVersion(t, env, objID, "other commit")
+		testutil.RunCLI(statusArgs(stagePath), env, stale(t, stagePath, "v2 (changed since the stage was created)"))
+	})
+
+	t.Run("object deleted", func(t *testing.T) {
+		env, stagePath, _ := setup(t, 1)
+		runOK(t, env, "delete", "--id", objID, "--yes")
+		testutil.RunCLI(statusArgs(stagePath), env, stale(t, stagePath, "no object (deleted since the stage was created)"))
+	})
+
+	t.Run("object created", func(t *testing.T) {
+		env, stagePath, _ := setup(t, 0)
+		commitVersion(t, env, objID, "other commit")
+		testutil.RunCLI(statusArgs(stagePath), env, stale(t, stagePath, "v1 (created since the stage was created)"))
+	})
+
+	t.Run("another commit to the new object interrupted", func(t *testing.T) {
+		env, stagePath, dir := setup(t, 0)
+		// the other commit is interrupted before the root inventory sidecar
+		// is written
+		otherStage := filepath.Join(t.TempDir(), "other.json")
+		runOK(t, env, "stage", "new", "-f", otherStage, "--id", objID)
+		runOK(t, env, "stage", "add", "-f", otherStage, dir)
+		commit := []string{"stage", "commit", "-f", otherStage, "-m", "other", "-n", "name"}
+		testutil.RunCLIInterrupt(commit, env, "write inventory.json.sha512", func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, context.Canceled))
+		})
+		testutil.RunCLI(statusArgs(stagePath), env, func(err error, stdout, stderr string) {
+			stale(t, stagePath, "head unknown (object directory created since the stage was created)")(err, stdout, stderr)
+			be.In(t, "if a commit to the object was interrupted, resume or revert it using its stage file", stderr)
+		})
+	})
+
+	t.Run("object replaced", func(t *testing.T) {
+		env, stagePath, _ := setup(t, 2)
+		runOK(t, env, "delete", "--id", objID, "--yes")
+		commitVersion(t, env, objID, "other commit")
+		testutil.RunCLI(statusArgs(stagePath), env, stale(t, stagePath, "v1 (replaced since the stage was created)"))
+	})
+
+	t.Run("check fails", func(t *testing.T) {
+		env, stagePath, _ := setup(t, 1)
+		be.NilErr(t, os.Rename(env["OCFL_ROOT"], env["OCFL_ROOT"]+"-moved"))
+		testutil.RunCLI(statusArgs(stagePath), env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+			be.False(t, errors.Is(err, ocfl.ErrUpdateConflict))
+			// the local details are printed first
+			be.In(t, "object:       "+objID+" (v2)\n", stdout)
+			be.In(t, "\nupstream:     unknown (couldn't check the object)\n", stdout)
+			be.In(t, "stage has changes to commit", stdout)
+			be.In(t, "couldn't check the object in the storage root: ", stderr)
+			be.In(t, "to skip the check: ocfl stage status -f "+stagePath+" --offline", stderr)
+		})
+		out := runOK(t, env, "stage", "status", "-f", stagePath, "--offline")
+		be.In(t, "\nupstream:     not checked (--offline)\n", out)
+	})
+
+	t.Run("stale with missing staged file", func(t *testing.T) {
+		env, stagePath, dir := setup(t, 1)
+		commitVersion(t, env, objID, "other commit")
+		be.NilErr(t, os.Remove(filepath.Join(filepath.Dir(dir), "staged.txt")))
+		testutil.RunCLI(statusArgs(stagePath), env, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
+			be.True(t, errors.Is(err, ocfl.ErrMissingContent))
+			be.In(t, "is stale", stderr)
+			be.In(t, "content for 1 file(s) has changed or is missing: staged.txt", stderr)
 		})
 	})
 }
@@ -882,6 +1004,83 @@ func TestStage_CommitInterrupted(t *testing.T) {
 		be.Equal(t, "", runOK(t, env, "validate", "--id", objID))
 	})
 
+	t.Run("status, commit in progress", func(t *testing.T) {
+		env, stagePath, _ := setup(t)
+		interrupt(t, env, stagePath, commitArgs(stagePath, "first commit"), "v1")
+		out := runOK(t, env, "stage", "status", "-f", stagePath)
+		be.In(t, "\nupstream:     commit of v1 isn't complete\n", out)
+		be.In(t, "commit in progress: v1\n", out)
+		be.In(t, "to resume: ocfl stage commit -f "+stagePath+" --resume\n", out)
+		be.In(t, "to revert: ocfl stage commit -f "+stagePath+" --revert\n", out)
+		be.False(t, strings.Contains(out, "stale"))
+	})
+
+	t.Run("status, object changed after commit interrupted", func(t *testing.T) {
+		env, stagePath, contentDir := setup(t)
+		interrupt(t, env, stagePath, commitArgs(stagePath, "first commit"), "v1")
+		otherCommit(t, env, contentDir)
+		testutil.RunCLI([]string{"stage", "status", "-f", stagePath}, env, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
+			be.In(t, "\nupstream:     v1 (created since the stage was created)\n", stdout)
+			be.False(t, strings.Contains(stdout, "commit in progress"))
+			be.In(t, "commit of "+objID+" (v1) can't be resumed or reverted: ", stderr)
+			be.In(t, "object path: ", stderr)
+			be.In(t, "then delete the stage: ocfl stage delete -f "+stagePath+" --force", stderr)
+		})
+	})
+
+	// completeCommit interrupts a commit, resumes it, and restores the
+	// stage file, as if it couldn't be removed when the commit completed.
+	completeCommit := func(t *testing.T) (env map[string]string, stagePath, contentDir string) {
+		env, stagePath, contentDir = setup(t)
+		interrupt(t, env, stagePath, commitArgs(stagePath, "first commit"), "v1")
+		stageBytes, err := os.ReadFile(stagePath)
+		be.NilErr(t, err)
+		runOK(t, env, "stage", "commit", "-f", stagePath, "--resume")
+		be.NilErr(t, os.WriteFile(stagePath, stageBytes, 0o644))
+		return env, stagePath, contentDir
+	}
+
+	t.Run("status, commit complete", func(t *testing.T) {
+		env, stagePath, contentDir := completeCommit(t)
+		out := runOK(t, env, "stage", "status", "-f", stagePath)
+		be.In(t, "\nupstream:     v1 (commit is complete)\n", out)
+		be.In(t, "commit complete: v1 is committed, but the stage file wasn't removed\n", out)
+		be.In(t, "to remove it: ocfl stage commit -f "+stagePath+" --resume\n", out)
+		be.False(t, strings.Contains(out, "--revert"))
+		// the staged files aren't needed
+		be.NilErr(t, os.Remove(filepath.Join(contentDir, "hello.csv")))
+		testutil.RunCLI([]string{"stage", "status", "-f", stagePath}, env, func(err error, stdout, stderr string) {
+			be.NilErr(t, err)
+			out = stdout
+			be.False(t, strings.Contains(stdout, "hello.csv"))
+			be.False(t, strings.Contains(stderr, "restore the files"))
+		})
+		// the command that status prints removes the stage file
+		_, cmdLine, ok := strings.Cut(out, "to remove it: ")
+		be.True(t, ok)
+		cmdLine, _, _ = strings.Cut(cmdLine, "\n")
+		args := strings.Fields(cmdLine)
+		be.Equal(t, "ocfl", args[0])
+		runOK(t, env, args[1:]...)
+		_, err := os.Stat(stagePath)
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+		be.Equal(t, "", runOK(t, env, "validate", "--id", objID))
+	})
+
+	t.Run("status, commit complete, offline", func(t *testing.T) {
+		env, stagePath, contentDir := completeCommit(t)
+		be.NilErr(t, os.Remove(filepath.Join(contentDir, "hello.csv")))
+		testutil.RunCLI([]string{"stage", "status", "-f", stagePath, "--offline"}, env, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, ocfl.ErrMissingContent))
+			be.In(t, "\nupstream:     not checked (--offline)\n", stdout)
+			be.In(t, "commit in progress or complete: v1 (storage root not checked)\n", stdout)
+			be.In(t, "to resume: ocfl stage commit -f "+stagePath+" --resume\n", stdout)
+			be.In(t, "to revert: ocfl stage commit -f "+stagePath+" --revert\n", stdout)
+			be.In(t, "restore the files to resume the commit, or revert it; if the commit is already complete, --resume only removes the stage file", stderr)
+		})
+	})
+
 	// the object is partially updated: everything is written except the
 	// root inventory sidecar.
 	partialUpdate := func(t *testing.T) (env map[string]string, stagePath string) {
@@ -897,6 +1096,14 @@ func TestStage_CommitInterrupted(t *testing.T) {
 		})
 		return env, stagePath
 	}
+
+	t.Run("status, partial update", func(t *testing.T) {
+		env, stagePath := partialUpdate(t)
+		// the stage's own partial update isn't a change to the object
+		out := runOK(t, env, "stage", "status", "-f", stagePath)
+		be.In(t, "\nupstream:     commit of v2 isn't complete\n", out)
+		be.In(t, "commit in progress: v2\n", out)
+	})
 
 	t.Run("resume partial update", func(t *testing.T) {
 		env, stagePath := partialUpdate(t)
@@ -1299,6 +1506,15 @@ func runOK(t *testing.T, env map[string]string, args ...string) string {
 		out = stdout
 	})
 	return out
+}
+
+// commitVersion commits a new version of the object id, with a file whose
+// content is msg, using a separate stage cache, as some other process might.
+func commitVersion(t *testing.T, env map[string]string, id, msg string) {
+	t.Helper()
+	dir := t.TempDir()
+	be.NilErr(t, os.WriteFile(filepath.Join(dir, "other.txt"), []byte(msg), 0o644))
+	runOK(t, env, "commit", dir, "--id", id, "-m", msg, "-n", "name", "--stage-cache", t.TempDir())
 }
 
 // readStage reads the stage in the stage file stagePath.
