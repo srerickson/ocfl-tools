@@ -170,7 +170,8 @@ func Create(name string, s *Stage) (*File, error) {
 	return &File{path: name, stage: s, saved: b, lock: lock}, nil
 }
 
-// LockInfo describes a stage file's lock file, as removed by [RemoveLock].
+// LockInfo describes a stage file's lock file, as read by [ReadLock] or
+// removed by [RemoveLock].
 type LockInfo struct {
 	// Path is the lock file: the stage file's name with ".lock" appended.
 	Path string
@@ -197,22 +198,50 @@ type LockInfo struct {
 // returns an error without removing it. The stage file isn't read or changed,
 // and doesn't need to exist.
 func RemoveLock(name string) (LockInfo, error) {
-	info := LockInfo{Path: lockPath(name)}
-	stat, err := os.Lstat(info.Path)
+	info, regular, err := readLock(name)
 	if err != nil {
 		return info, err
 	}
-	if !stat.Mode().IsRegular() {
+	if !regular {
 		return info, fmt.Errorf("can't remove the stage file lock: %s isn't a regular file", info.Path)
-	}
-	if b, err := os.ReadFile(info.Path); err == nil {
-		info.Holder = lockHolder(b)
 	}
 	if err := removeLockFile(info.Path); err != nil {
 		return info, fmt.Errorf("removing the stage file lock: %w", err)
 	}
 	syncDir(filepath.Dir(info.Path))
 	return info, nil
+}
+
+// ReadLock returns the lock file of the stage file name and what it records,
+// if the stage file is locked, without waiting for the lock or changing it.
+// If there's no lock file, it returns an error wrapping [fs.ErrNotExist],
+// with the path. The lock may be released or taken at any time, so the result
+// is only a snapshot.
+func ReadLock(name string) (LockInfo, error) {
+	info, _, err := readLock(name)
+	return info, err
+}
+
+// readLock is ReadLock, also returning whether the lock file is a regular
+// file. The holder is read only from a regular file.
+func readLock(name string) (info LockInfo, regular bool, err error) {
+	info = LockInfo{Path: lockPath(name)}
+	stat, err := os.Lstat(info.Path)
+	if err != nil {
+		return info, false, err
+	}
+	if !stat.Mode().IsRegular() {
+		return info, false, nil
+	}
+	b, err := os.ReadFile(info.Path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		// removed since Lstat
+		return info, false, err
+	case err == nil:
+		info.Holder = lockHolder(b)
+	}
+	return info, true, nil
 }
 
 // Path returns the path of the stage file.
