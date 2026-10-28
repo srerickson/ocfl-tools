@@ -457,12 +457,16 @@ func (cmd *StageDeleteCmd) removeLock(env *cmdEnv, parent *StageCmd, kctx *kong.
 	case err != nil:
 		return err
 	}
-	holder := info.Holder
-	if holder == "" {
-		holder = "unknown process"
-	}
-	fmt.Fprintf(env.stdout, "removed lock file %s (held by %s)\n", info.Path, holder)
+	fmt.Fprintf(env.stdout, "removed lock file %s (held by %s)\n", info.Path, lockHolder(info))
 	return nil
+}
+
+// lockHolder describes the command that holds the lock info.
+func lockHolder(info stage.LockInfo) string {
+	if info.Holder == "" {
+		return "unknown process"
+	}
+	return info.Holder
 }
 
 // StageDiffCmd is 'ocfl stage diff'.
@@ -550,7 +554,14 @@ error.
 Status reads the storage root to check whether the object has changed since
 the stage was created. It exits with an error if the stage is stale, or if
 the check fails (for example, because the storage root can't be read). Use
---offline to skip the check.`
+--offline to skip the check.
+
+If staged files' metadata has changed, but their content hasn't, status
+saves their new metadata in the stage file, so they aren't read again. It
+does that only if it can lock the stage file right away; otherwise, it
+skips saving. Status doesn't wait for the lock: it works while another
+command is changing the stage, and it warns if the stage is locked, with
+how to clear a lock left behind by a command that was killed.`
 }
 
 func (cmd *StageStatusCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
@@ -558,6 +569,7 @@ func (cmd *StageStatusCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCm
 	if err != nil {
 		return err
 	}
+	warnLocked(env, ref)
 	s := f.Stage()
 	upd := s.Update()
 	fmt.Fprintf(env.stdout, "storage root: %s\n", s.Root())
@@ -592,6 +604,19 @@ func (cmd *StageStatusCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCm
 		fmt.Fprintln(env.stdout, "stage is unchanged and/or empty")
 	}
 	return errors.Join(upstreamErr, checkStagedFiles(ctx, env, f, up))
+}
+
+// warnLocked logs a warning if the stage file ref is locked, saying which
+// command holds the lock, and how to clear it, so a lock left behind by a
+// command that was killed doesn't go unnoticed.
+func warnLocked(env *cmdEnv, ref stageRef) {
+	info, err := stage.ReadLock(ref.path)
+	if err != nil {
+		// not locked, or the lock can't be checked: commands that change
+		// the stage say so
+		return
+	}
+	env.logger.Warn("the stage is locked by "+lockHolder(info)+"; "+clearLockHint(ref), "lock", info.Path)
 }
 
 // checkUpstream checks the object in the storage root of the stage s, which
@@ -830,7 +855,7 @@ func lockError(err error, ref stageRef) error {
 	var hint string
 	switch {
 	case errors.Is(err, stage.ErrLocked):
-		hint = "if no other ocfl command is using the stage, clear the lock: " + ref.clearLockCommand()
+		hint = clearLockHint(ref)
 	case errors.Is(err, stage.ErrNotUnlocked):
 		hint = "to clear the lock: " + ref.clearLockCommand()
 	case errors.Is(err, stage.ErrLockBroken):
@@ -839,6 +864,12 @@ func lockError(err error, ref stageRef) error {
 		return err
 	}
 	return fmt.Errorf("%w\n  %s", err, hint)
+}
+
+// clearLockHint says how to clear the lock on the stage file ref, which is
+// held by another command.
+func clearLockHint(ref stageRef) string {
+	return "if no other ocfl command is using the stage, clear the lock: " + ref.clearLockCommand()
 }
 
 // lockBrokenHint says what to do about the stage file ref, whose lock was
