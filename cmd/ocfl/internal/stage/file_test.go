@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -72,6 +73,7 @@ func TestOpen(t *testing.T) {
 	})
 
 	t.Run("no temp files left", func(t *testing.T) {
+		be.NilErr(t, f.Close())
 		entries, err := os.ReadDir(dir)
 		be.NilErr(t, err)
 		be.Equal(t, 1, len(entries))
@@ -115,12 +117,108 @@ func TestOpen(t *testing.T) {
 	})
 }
 
+func TestOpenLocked(t *testing.T) {
+	ctx := context.Background()
+	stage.SetLockWait(t, 100*time.Millisecond)
+	root := newRoot(t)
+
+	t.Run("lock held until close", func(t *testing.T) {
+		f := newFile(t, root, "ark:123/abc")
+		lock := f.Path() + ".lock"
+		_, err := os.Stat(lock)
+		be.NilErr(t, err)
+		// another command can't lock the file
+		_, err = stage.OpenLocked(f.Path())
+		be.True(t, errors.Is(err, stage.ErrLocked))
+		be.In(t, lock, err.Error())
+		be.In(t, "remove the lock file", err.Error())
+		be.In(t, fmt.Sprintf("pid %d", os.Getpid()), err.Error())
+		// but it can read it
+		got, err := stage.Open(f.Path())
+		be.NilErr(t, err)
+		be.Equal(t, "ark:123/abc", got.Stage().ID())
+		be.NilErr(t, f.Close())
+		be.NilErr(t, f.Close()) // closing again does nothing
+		lockRemoved(t, f)
+		// a closed file can't be changed
+		be.Nonzero(t, f.Save())
+		be.Nonzero(t, f.Delete())
+		locked, err := stage.OpenLocked(f.Path())
+		be.NilErr(t, err)
+		be.NilErr(t, locked.Save())
+		be.NilErr(t, locked.Close())
+		lockRemoved(t, f)
+	})
+
+	t.Run("waits for a brief lock", func(t *testing.T) {
+		stage.SetLockWait(t, 10*time.Second)
+		f := newFile(t, root, "ark:123/abc")
+		closed := make(chan error)
+		time.AfterFunc(100*time.Millisecond, func() { closed <- f.Close() })
+		locked, err := stage.OpenLocked(f.Path())
+		be.NilErr(t, err)
+		be.NilErr(t, <-closed)
+		be.NilErr(t, locked.Close())
+	})
+
+	t.Run("stale lock", func(t *testing.T) {
+		f := newFile(t, root, "ark:123/abc")
+		be.NilErr(t, f.Close())
+		lock := f.Path() + ".lock"
+		be.NilErr(t, os.WriteFile(lock, nil, 0o644))
+		_, err := stage.OpenLocked(f.Path())
+		be.True(t, errors.Is(err, stage.ErrLocked))
+		be.In(t, "unknown process", err.Error())
+		// the lock file isn't removed
+		_, err = os.Stat(lock)
+		be.NilErr(t, err)
+	})
+
+	t.Run("unlocked file can't be changed", func(t *testing.T) {
+		readOnly, writable := newRoots(t)
+		f := newFile(t, writable, "ark:123/abc")
+		be.NilErr(t, f.Stage().AddDir(ctx, writeFiles(t, map[string]string{"a.txt": "a"}), nil))
+		be.NilErr(t, f.Save())
+		be.NilErr(t, f.Close())
+		before, err := os.ReadFile(f.Path())
+		be.NilErr(t, err)
+		got, err := stage.Open(f.Path())
+		be.NilErr(t, err)
+		be.Nonzero(t, got.Save())
+		be.Nonzero(t, got.Delete())
+		be.Nonzero(t, got.Discard())
+		be.Nonzero(t, got.Commit(ctx, readOnly, "message", ocfl.User{Name: "name"}, nil))
+		be.False(t, got.Stage().Frozen())
+		be.Nonzero(t, got.Resume(ctx, writable, nil))
+		be.Nonzero(t, got.Revert(ctx, writable, nil))
+		after, err := os.ReadFile(f.Path())
+		be.NilErr(t, err)
+		be.Equal(t, string(before), string(after))
+		lockRemoved(t, f)
+	})
+
+	t.Run("lock released if the file can't be read", func(t *testing.T) {
+		dir := t.TempDir()
+		missing := filepath.Join(dir, "missing.json")
+		_, err := stage.OpenLocked(missing)
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+		bad := filepath.Join(dir, "bad.json")
+		be.NilErr(t, os.WriteFile(bad, []byte("{}"), 0o644))
+		_, err = stage.OpenLocked(bad)
+		be.Nonzero(t, err)
+		entries, err := os.ReadDir(dir)
+		be.NilErr(t, err)
+		be.Equal(t, 1, len(entries))
+	})
+}
+
 func TestCreate(t *testing.T) {
 	root := newRoot(t)
 	dir := t.TempDir()
 	name := filepath.Join(dir, "stage.json")
-	_, err := stage.Create(name, newStage(t, root, "ark:123/abc"))
+	f, err := stage.Create(name, newStage(t, root, "ark:123/abc"))
 	be.NilErr(t, err)
+	be.NilErr(t, f.Close())
 	got, err := stage.Open(name)
 	be.NilErr(t, err)
 	be.Equal(t, "ark:123/abc", got.Stage().ID())
@@ -130,10 +228,18 @@ func TestCreate(t *testing.T) {
 	got, err = stage.Open(name)
 	be.NilErr(t, err)
 	be.Equal(t, "ark:123/abc", got.Stage().ID())
-	// no temp files left
+	// no temp or lock files left
 	entries, err := os.ReadDir(dir)
 	be.NilErr(t, err)
 	be.Equal(t, 1, len(entries))
+	// a locked file isn't created
+	stage.SetLockWait(t, 0)
+	locked := filepath.Join(dir, "locked.json")
+	be.NilErr(t, os.WriteFile(locked+".lock", nil, 0o644))
+	_, err = stage.Create(locked, newStage(t, root, "ark:123/abc"))
+	be.True(t, errors.Is(err, stage.ErrLocked))
+	_, err = os.Stat(locked)
+	be.True(t, errors.Is(err, fs.ErrNotExist))
 }
 
 // TestCreate_mode isn't parallel: it sets the process's umask.
@@ -204,6 +310,122 @@ func TestFile_Check(t *testing.T) {
 	result, err = got.Check(ctx, nil)
 	be.NilErr(t, err)
 	be.False(t, result.Refreshed)
+}
+
+// TestFile_Check_Unlocked tests saving refreshed records from a stage file
+// that was opened without its lock, as by 'stage status', while another
+// command changes the stage file.
+func TestFile_Check_Unlocked(t *testing.T) {
+	ctx := context.Background()
+	stage.SetLockWait(t, 0)
+	// setup returns a stage file, which isn't locked, with a staged file
+	// whose stat has changed since it was added, so checking it refreshes
+	// the stage, and read-only and writable roots for the stage.
+	setup := func(t *testing.T) (f *stage.File, readOnly, writable *ocfl.Root) {
+		readOnly, writable = newRoots(t)
+		dir := writeFiles(t, map[string]string{"a.txt": "a"})
+		created := newFile(t, writable, "ark:123/abc")
+		be.NilErr(t, created.Stage().AddDir(ctx, dir, nil))
+		be.NilErr(t, created.Save())
+		be.NilErr(t, created.Close())
+		mtime := time.Now().Add(-time.Hour)
+		be.NilErr(t, os.Chtimes(filepath.Join(dir, "a.txt"), mtime, mtime))
+		f, err := stage.Open(created.Path())
+		be.NilErr(t, err)
+		return f, readOnly, writable
+	}
+	// check checks f, which is refreshed, but whose refreshed records
+	// shouldn't be saved: the stage file should have want.
+	check := func(t *testing.T, f *stage.File, want []byte) {
+		t.Helper()
+		result, err := f.Check(ctx, nil)
+		be.NilErr(t, err)
+		be.True(t, result.Refreshed)
+		be.Equal(t, 0, len(result.Changed))
+		got, err := os.ReadFile(f.Path())
+		if want == nil {
+			be.True(t, errors.Is(err, fs.ErrNotExist))
+			return
+		}
+		be.NilErr(t, err)
+		be.Equal(t, string(want), string(got))
+	}
+
+	t.Run("unchanged file", func(t *testing.T) {
+		f, _, _ := setup(t)
+		before, err := os.ReadFile(f.Path())
+		be.NilErr(t, err)
+		result, err := f.Check(ctx, nil)
+		be.NilErr(t, err)
+		be.True(t, result.Refreshed)
+		after, err := os.ReadFile(f.Path())
+		be.NilErr(t, err)
+		be.Unequal(t, string(before), string(after))
+		lockRemoved(t, f)
+		// the stage file can be locked again
+		locked, err := stage.OpenLocked(f.Path())
+		be.NilErr(t, err)
+		be.NilErr(t, locked.Close())
+	})
+
+	t.Run("frozen after it was read", func(t *testing.T) {
+		f, readOnly, writable := setup(t)
+		// another command freezes the stage, and the commit is interrupted
+		other, err := stage.OpenLocked(f.Path())
+		be.NilErr(t, err)
+		be.Nonzero(t, other.Commit(ctx, readOnly, "message", ocfl.User{Name: "name"}, nil))
+		be.NilErr(t, other.Close())
+		frozen, err := os.ReadFile(f.Path())
+		be.NilErr(t, err)
+		check(t, f, frozen)
+		lockRemoved(t, f)
+		// the commit can still be reverted
+		reverting, err := stage.OpenLocked(f.Path())
+		be.NilErr(t, err)
+		be.True(t, reverting.Stage().Frozen())
+		be.NilErr(t, reverting.Revert(ctx, writable, nil))
+		be.NilErr(t, reverting.Close())
+	})
+
+	t.Run("changed while locked", func(t *testing.T) {
+		f, readOnly, _ := setup(t)
+		// another command is committing the stage
+		other, err := stage.OpenLocked(f.Path())
+		be.NilErr(t, err)
+		defer other.Close()
+		be.Nonzero(t, other.Commit(ctx, readOnly, "message", ocfl.User{Name: "name"}, nil))
+		frozen, err := os.ReadFile(f.Path())
+		be.NilErr(t, err)
+		check(t, f, frozen)
+		// the other command's lock is kept
+		be.True(t, other.Stage().Frozen())
+		_, err = os.Stat(f.Path() + ".lock")
+		be.NilErr(t, err)
+		be.NilErr(t, other.Save())
+	})
+
+	t.Run("locked", func(t *testing.T) {
+		f, _, _ := setup(t)
+		other, err := stage.OpenLocked(f.Path())
+		be.NilErr(t, err)
+		before, err := os.ReadFile(f.Path())
+		be.NilErr(t, err)
+		check(t, f, before)
+		_, err = os.Stat(f.Path() + ".lock")
+		be.NilErr(t, err)
+		be.NilErr(t, other.Close())
+	})
+
+	t.Run("removed after it was read", func(t *testing.T) {
+		f, _, writable := setup(t)
+		// another command commits the stage, removing the stage file
+		other, err := stage.OpenLocked(f.Path())
+		be.NilErr(t, err)
+		be.NilErr(t, other.Commit(ctx, writable, "message", ocfl.User{Name: "name"}, nil))
+		be.NilErr(t, other.Close())
+		check(t, f, nil)
+		lockRemoved(t, f)
+	})
 }
 
 func TestFile_Delete(t *testing.T) {
@@ -386,8 +608,10 @@ func TestFile_Resume(t *testing.T) {
 		f := newFile(t, writable, "ark:123/abc")
 		be.NilErr(t, f.Stage().AddDir(ctx, writeFiles(t, map[string]string{"a.txt": "a"}), nil))
 		be.Nonzero(t, f.Commit(ctx, readOnly, "message", user, nil))
-		saved, err := stage.Open(f.Path())
+		be.NilErr(t, f.Close())
+		saved, err := stage.OpenLocked(f.Path())
 		be.NilErr(t, err)
+		defer saved.Close()
 		be.NilErr(t, saved.Resume(ctx, writable, nil))
 		stageFileRemoved(t, f)
 		obj, err := writable.NewObject(ctx, "ark:123/abc")
@@ -448,8 +672,10 @@ func TestFile_Resume(t *testing.T) {
 			be.True(t, errors.Is(f.Commit(ctx, root, "message", user, nil), stage.ErrNotRemoved))
 			unlock()
 			be.NilErr(t, tt.change(filepath.Join(dir, "a.txt")))
-			saved, err := stage.Open(f.Path())
+			be.NilErr(t, f.Close())
+			saved, err := stage.OpenLocked(f.Path())
 			be.NilErr(t, err)
+			defer saved.Close()
 			be.NilErr(t, saved.Resume(ctx, root, nil))
 			stageFileRemoved(t, f)
 			obj, err := root.NewObject(ctx, "ark:123/abc")
@@ -467,8 +693,10 @@ func TestFile_Revert(t *testing.T) {
 		f := newFile(t, writable, "ark:123/abc")
 		be.NilErr(t, f.Stage().AddDir(ctx, writeFiles(t, map[string]string{"a.txt": "a"}), nil))
 		be.Nonzero(t, f.Commit(ctx, readOnly, "message", ocfl.User{Name: "name"}, nil))
-		saved, err := stage.Open(f.Path())
+		be.NilErr(t, f.Close())
+		saved, err := stage.OpenLocked(f.Path())
 		be.NilErr(t, err)
+		defer saved.Close()
 		be.NilErr(t, saved.Revert(ctx, writable, nil))
 		// the stage is saved as a draft with the staged files
 		be.False(t, saved.Stage().Frozen())
@@ -505,8 +733,10 @@ func TestFile_Revert(t *testing.T) {
 		be.Equal(t, ocfl.V(1), obj.Head())
 		// reverting the stage in the file again finishes reverting
 		unlock()
-		saved, err := stage.Open(f.Path())
+		be.NilErr(t, f.Close())
+		saved, err := stage.OpenLocked(f.Path())
 		be.NilErr(t, err)
+		defer saved.Close()
 		be.NilErr(t, saved.Revert(ctx, writable, nil))
 		draft := savedStage(t, f)
 		be.False(t, draft.Frozen())
@@ -572,6 +802,7 @@ func newFile(t *testing.T, root *ocfl.Root, id string) *stage.File {
 	t.Helper()
 	f, err := stage.Create(filepath.Join(t.TempDir(), "stage.json"), newStage(t, root, id))
 	be.NilErr(t, err)
+	t.Cleanup(func() { f.Close() })
 	return f
 }
 
@@ -581,6 +812,14 @@ func savedStage(t *testing.T, f *stage.File) *stage.Stage {
 	got, err := stage.Open(f.Path())
 	be.NilErr(t, err)
 	return got.Stage()
+}
+
+// lockRemoved checks that f's stage file isn't locked: its lock file doesn't
+// exist.
+func lockRemoved(t *testing.T, f *stage.File) {
+	t.Helper()
+	_, err := os.Stat(f.Path() + ".lock")
+	be.True(t, errors.Is(err, fs.ErrNotExist))
 }
 
 // stageFileRemoved checks that f's stage file doesn't exist.

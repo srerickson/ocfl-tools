@@ -773,7 +773,7 @@ var upstreamFixtures = []upstreamFixture{
 			be.NilErr(t, f.Resume(context.Background(), root, nil))
 			// the stage file is left behind
 			be.NilErr(t, os.WriteFile(f.Path(), saved, 0o644))
-			return root, openFile(t, f.Path())
+			return root, reopen(t, f)
 		},
 		want: stage.Upstream{State: stage.UpstreamCommitted, Exists: true, Head: ocfl.V(2)},
 	},
@@ -817,7 +817,7 @@ func frozenFile(t *testing.T, readOnly, root *ocfl.Root, id string) *stage.File 
 	t.Helper()
 	f := draftFile(t, root, id)
 	be.Nonzero(t, f.Commit(context.Background(), readOnly, "message", ocfl.User{Name: "name"}, nil))
-	return openFile(t, f.Path())
+	return reopen(t, f)
 }
 
 // interruptCommit commits the draft stage file f to root, interrupting it
@@ -838,7 +838,7 @@ func interruptCommit(t *testing.T, root *ocfl.Root, f *stage.File) *stage.File {
 	verInv, err := os.ReadFile(filepath.Join(dir, head.String(), "inventory.json"))
 	be.NilErr(t, err)
 	be.Equal(t, string(verInv), string(rootInv))
-	return openFile(t, f.Path())
+	return reopen(t, f)
 }
 
 // commitOther commits a new version of the object id in root with another
@@ -850,12 +850,15 @@ func commitOther(t *testing.T, root *ocfl.Root, id string) {
 	be.NilErr(t, other.Commit(context.Background(), root, "other", ocfl.User{Name: "other"}, nil))
 }
 
-// openFile opens the stage file name.
-func openFile(t *testing.T, name string) *stage.File {
+// reopen closes f, releasing its lock, and opens its stage file again with
+// the lock, so it can be changed. The lock is released when t ends.
+func reopen(t *testing.T, f *stage.File) *stage.File {
 	t.Helper()
-	f, err := stage.Open(name)
+	be.NilErr(t, f.Close())
+	got, err := stage.OpenLocked(f.Path())
 	be.NilErr(t, err)
-	return f
+	t.Cleanup(func() { got.Close() })
+	return got
 }
 
 // objectDir returns the local directory of the object id in root, which

@@ -106,14 +106,26 @@ func (cmd *StageCmd) ref(env *cmdEnv, kctx *kong.Context) (stageRef, error) {
 	return stageRef{}, errors.New("a stage is required: use --stage (-s) with a stage ID or --file (-f) with a stage file")
 }
 
-// load opens the stage file named by --stage or --file, and returns it with
-// the flags that name it.
+// load opens the stage file named by --stage or --file without locking it,
+// and returns it with the flags that name it. The stage file can be read and
+// checked, but not changed: use loadLocked for that.
 func (cmd *StageCmd) load(env *cmdEnv, kctx *kong.Context) (*stage.File, stageRef, error) {
+	return cmd.open(env, kctx, stage.Open)
+}
+
+// loadLocked is like load, but it locks the stage file, so it can be changed.
+// The caller must close the file to release the lock.
+func (cmd *StageCmd) loadLocked(env *cmdEnv, kctx *kong.Context) (*stage.File, stageRef, error) {
+	return cmd.open(env, kctx, stage.OpenLocked)
+}
+
+// open opens the stage file named by --stage or --file with openFn.
+func (cmd *StageCmd) open(env *cmdEnv, kctx *kong.Context, openFn func(string) (*stage.File, error)) (*stage.File, stageRef, error) {
 	ref, err := cmd.ref(env, kctx)
 	if err != nil {
 		return nil, stageRef{}, err
 	}
-	f, err := stage.Open(ref.path)
+	f, err := openFn(ref.path)
 	if err != nil {
 		return nil, stageRef{}, err
 	}
@@ -123,16 +135,17 @@ func (cmd *StageCmd) load(env *cmdEnv, kctx *kong.Context) (*stage.File, stageRe
 	return f, ref, nil
 }
 
-// loadDraft is like load, but it returns an error if the stage is frozen for
-// a commit, which must be resumed or reverted before the stage can be
-// changed.
+// loadDraft is like loadLocked, but it returns an error if the stage is
+// frozen for a commit, which must be resumed or reverted before the stage can
+// be changed.
 func (cmd *StageCmd) loadDraft(env *cmdEnv, kctx *kong.Context) (*stage.File, stageRef, error) {
-	f, ref, err := cmd.load(env, kctx)
+	f, ref, err := cmd.loadLocked(env, kctx)
 	if err != nil {
 		return nil, stageRef{}, err
 	}
 	if f.Stage().Frozen() {
-		return nil, stageRef{}, fmt.Errorf("the stage can't be changed: %w", inProgressError(f.Stage(), ref))
+		err := fmt.Errorf("the stage can't be changed: %w", inProgressError(f.Stage(), ref))
+		return nil, stageRef{}, errors.Join(err, f.Close())
 	}
 	return f, ref, nil
 }
@@ -150,7 +163,7 @@ stage ID. The stage is saved in the stage cache, or in the file given with
 exists, commit or delete it first.`
 }
 
-func (cmd *NewStageCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
+func (cmd *NewStageCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) (err error) {
 	if parent.Stage != "" {
 		return errors.New("--stage (-s) can't be used with 'stage new': the stage ID is set from the storage root and object ID")
 	}
@@ -179,9 +192,11 @@ func (cmd *NewStageCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, 
 	if err != nil {
 		return err
 	}
-	if _, err := ref.create(s); err != nil {
+	f, err := ref.create(s)
+	if err != nil {
 		return err
 	}
+	defer closeStage(f, &err)
 	if ref.shortID == "" {
 		env.logger.Info("stage file created", "path", ref.path, "object_id", s.ID(), "object_version", s.NextHead())
 		return nil
@@ -200,11 +215,12 @@ type StageAddCmd struct {
 	Path     string `arg:"" help:"file or parent directory for content to add to the stage"`
 }
 
-func (cmd *StageAddCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
+func (cmd *StageAddCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) (err error) {
 	f, _, err := parent.loadDraft(env, kctx)
 	if err != nil {
 		return err
 	}
+	defer closeStage(f, &err)
 	s := f.Stage()
 	absPath, err := filepath.Abs(cmd.Path)
 	if err != nil {
@@ -259,11 +275,12 @@ to undo the partial update. -m, -n and -e can't be used with --resume or
 deleted. The commit is to the storage root saved in the stage.`
 }
 
-func (cmd *StageCommitCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
-	f, ref, err := parent.load(env, kctx)
+func (cmd *StageCommitCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) (err error) {
+	f, ref, err := parent.loadLocked(env, kctx)
 	if err != nil {
 		return err
 	}
+	defer closeStage(f, &err)
 	s := f.Stage()
 	root, err := env.openRoot(ctx, s.Root())
 	if err != nil {
@@ -359,11 +376,12 @@ use --force. The object may be left partially updated: check it with 'ocfl
 validate'.`
 }
 
-func (cmd *StageDeleteCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
-	f, ref, err := parent.load(env, kctx)
+func (cmd *StageDeleteCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context) (err error) {
+	f, ref, err := parent.loadLocked(env, kctx)
 	if err != nil {
 		return err
 	}
+	defer closeStage(f, &err)
 	s := f.Stage()
 	if cmd.Force {
 		err = f.Discard()
@@ -442,11 +460,12 @@ type StageRmCmd struct {
 	Path      string `arg:"" name:"path" help:"file or directory to remove"`
 }
 
-func (cmd *StageRmCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
+func (cmd *StageRmCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context) (err error) {
 	f, _, err := parent.loadDraft(env, kctx)
 	if err != nil {
 		return err
 	}
+	defer closeStage(f, &err)
 	if err := f.Stage().Remove(cmd.Path, cmd.Recursive, env.logger); err != nil {
 		return err
 	}
@@ -845,6 +864,12 @@ func upstreamError(root *ocfl.Root, s *stage.Stage, ref stageRef, up stage.Upstr
 func staleDraftGuidance(ref stageRef) []string {
 	return []string{"  the stage can't be committed: delete it and create a new one",
 		"  to delete it: " + ref.command("delete")}
+}
+
+// closeStage closes the stage file f, releasing its lock, and joins any error
+// to *err. It's deferred by commands that lock a stage file.
+func closeStage(f *stage.File, err *error) {
+	*err = errors.Join(*err, f.Close())
 }
 
 // checkWritable returns an error if root's storage can't be written, so a
