@@ -36,12 +36,15 @@ var (
 	// the lock file is left behind: remove it with [RemoveLock].
 	ErrLocked = errors.New("the stage file is locked by another command")
 
-	// ErrLockBroken is returned by [File.Close] when the stage file's lock was
-	// removed (see [RemoveLock]) while f held it: another command may have
-	// changed the stage file.
+	// ErrLockBroken is returned by [File.Close], and by the File methods that
+	// change the stage file, when the stage file's lock was removed (see
+	// [RemoveLock]) while the File held it: another command may have changed
+	// the stage file. The methods check the lock before they change the stage
+	// file or the object, so they stop without changing them.
 	ErrLockBroken = errors.New("the stage file's lock was removed while the command held it")
 
-	// ErrNotUnlocked is returned by [File.Close] when the stage file's lock
+	// ErrNotUnlocked is returned by [File.Close] (and by [OpenLocked] and
+	// [Create] when they fail and release the lock) when the stage file's lock
 	// file couldn't be removed: the stage file stays locked until it's removed
 	// with [RemoveLock].
 	ErrNotUnlocked = errors.New("the stage file's lock couldn't be released")
@@ -107,7 +110,11 @@ func Open(name string) (*File, error) {
 // OpenLocked locks the stage file name, then reads it. The lock is held until
 // [File.Close] is called. If the stage file is locked by another command,
 // OpenLocked waits for a moment (Check may lock it briefly), then returns an
-// error wrapping [ErrLocked], which names the lock file. If OpenLocked returns
+// error wrapping [ErrLocked], which names the lock file. If OpenLocked takes
+// the lock, but can't read the stage file, it releases the lock and returns
+// the error. If the lock can't be released, the error also wraps
+// [ErrNotUnlocked], and the stage file stays locked; if the lock was removed
+// in the meantime, it wraps [ErrLockBroken]. Otherwise, if OpenLocked returns
 // an error, the lock isn't held.
 func OpenLocked(name string) (*File, error) {
 	lock, err := lockFile(name)
@@ -125,8 +132,12 @@ func OpenLocked(name string) (*File, error) {
 // Create locks the new stage file name and saves s in it. The lock is held
 // until [File.Close] is called. If the file exists, it isn't replaced: Create
 // returns an error that wraps [fs.ErrExist]. If it's locked by another
-// command, Create returns an error wrapping [ErrLocked]. If Create returns an
-// error, the lock isn't held.
+// command, Create returns an error wrapping [ErrLocked]. If Create takes the
+// lock, but can't save the stage, it releases the lock and returns the error.
+// If the lock can't be released, the error also wraps [ErrNotUnlocked], and
+// the stage file stays locked; if the lock was removed in the meantime, it
+// wraps [ErrLockBroken]. Otherwise, if Create returns an error, the lock
+// isn't held.
 func Create(name string, s *Stage) (*File, error) {
 	if s == nil {
 		panic("stage.Create: nil stage")
@@ -174,9 +185,11 @@ type LockInfo struct {
 // even if another command holds it. It's for clearing a lock left behind by a
 // command that was killed. Removing the lock of a command that's still
 // running breaks it: another command can lock and change the stage file at
-// the same time. The broken holder's [File.Close] doesn't remove the new
-// holder's lock, and returns an error wrapping [ErrLockBroken], but nothing
-// prevents its changes to the stage file before then, such as [File.Save].
+// the same time. The broken holder's File checks its lock before each change
+// to the stage file or the object, and returns an error wrapping
+// [ErrLockBroken] instead of making it, but a change that's already under way
+// when the lock is removed isn't stopped. Its [File.Close] doesn't remove a
+// newer lock, as far as it can tell (see [File.Close]).
 //
 // RemoveLock returns the lock file's path and what it recorded. If there's no
 // lock file, it returns an error wrapping [fs.ErrNotExist], with the path.
@@ -212,11 +225,13 @@ func (f *File) Stage() *Stage { return f.stage }
 // change the stage file. Calling Close again does nothing.
 //
 // Close removes the lock file only if it's still the one f created. If it was
-// removed while f held the lock (see [RemoveLock]), Close removes nothing,
-// not even a lock file created since by another command, and returns an
-// error wrapping [ErrLockBroken]: another command may have changed the stage
-// file. If the lock file can't be removed, Close returns an error wrapping
-// [ErrNotUnlocked], and the stage file stays locked.
+// removed while f held the lock (see [RemoveLock]), Close removes nothing and
+// returns an error wrapping [ErrLockBroken]: another command may have changed
+// the stage file. This is best effort: Close reads the lock file, then
+// removes it, so if the lock is removed and taken by another command in
+// between, Close removes the other command's lock, and that command sees
+// [ErrLockBroken] instead. If the lock file can't be removed, Close returns
+// an error wrapping [ErrNotUnlocked], and the stage file stays locked.
 func (f *File) Close() error {
 	if f.lock == nil {
 		return nil
@@ -229,8 +244,8 @@ func (f *File) Close() error {
 // Save saves the stage in the file. The file is replaced atomically, so an
 // interrupted Save leaves the previous stage file in place.
 func (f *File) Save() error {
-	if f.lock == nil {
-		return errNotLocked
+	if err := f.checkLock(); err != nil {
+		return err
 	}
 	b, err := write(f.path, f.stage, func(tmp string) error { return os.Rename(tmp, f.path) })
 	if err != nil {
@@ -297,8 +312,15 @@ func (f *File) Discard() error { return f.remove() }
 //
 // Otherwise, if Commit returns an error, the stage is frozen, and the object
 // may be partially updated: the commit can be resumed or reverted. If the stage
-// was frozen when Commit was called, it returns [ErrFrozen]. Progress is logged
-// to logger, which may be nil.
+// was frozen when Commit was called, it returns [ErrFrozen].
+//
+// Commit checks that f still holds the lock before it saves the frozen stage,
+// and before it removes the stage file. If the lock was removed (see
+// [RemoveLock]) before the stage was saved, Commit returns an error wrapping
+// [ErrLockBroken] without changing the stage file or the object. If it was
+// removed while the object was updated, the commit is complete, but the stage
+// file isn't removed: the error wraps [ErrNotRemoved] and [ErrLockBroken].
+// Progress is logged to logger, which may be nil.
 func (f *File) Commit(ctx context.Context, root *ocfl.Root, msg string, user ocfl.User, logger *slog.Logger) error {
 	if root == nil {
 		panic("stage.File.Commit: nil root")
@@ -344,13 +366,17 @@ func (f *File) Commit(ctx context.Context, root *ocfl.Root, msg string, user ocf
 // error, the stage is still frozen: the object may be partially updated. If
 // the error wraps [ocfl.ErrUpdateConflict], the object was changed by
 // something else after the commit was interrupted, and the commit can't be
-// resumed or reverted. Progress is logged to logger, which may be nil.
+// resumed or reverted. If the stage file's lock was removed while f held it
+// (see [RemoveLock]), Resume returns an error wrapping [ErrLockBroken]
+// without changing the object; if it's removed while the object is updated,
+// the error wraps [ErrNotRemoved] too (see [File.Commit]). Progress is logged
+// to logger, which may be nil.
 func (f *File) Resume(ctx context.Context, root *ocfl.Root, logger *slog.Logger) error {
 	if root == nil {
 		panic("stage.File.Resume: nil root")
 	}
-	if f.lock == nil {
-		return errNotLocked
+	if err := f.checkLock(); err != nil {
+		return err
 	}
 	if !f.stage.Frozen() {
 		return ErrNotFrozen
@@ -385,14 +411,16 @@ func (f *File) Resume(ctx context.Context, root *ocfl.Root, logger *slog.Logger)
 // an error wrapping [ocfl.ErrUpdateConflict]. If the commit is reverted, but
 // the draft can't be saved, Revert returns an error and the stage is a draft,
 // but the stage file still has the frozen stage: its commit must not be
-// resumed. Reverting it again (see [OpenLocked]) finishes reverting. Progress
-// is logged to logger, which may be nil.
+// resumed. Reverting it again (see [OpenLocked]) finishes reverting. If the
+// stage file's lock was removed while f held it (see [RemoveLock]), Revert
+// returns an error wrapping [ErrLockBroken] without changing the object.
+// Progress is logged to logger, which may be nil.
 func (f *File) Revert(ctx context.Context, root *ocfl.Root, logger *slog.Logger) error {
 	if root == nil {
 		panic("stage.File.Revert: nil root")
 	}
-	if f.lock == nil {
-		return errNotLocked
+	if err := f.checkLock(); err != nil {
+		return err
 	}
 	s := f.stage
 	if !s.Frozen() {
@@ -441,10 +469,20 @@ func (f *File) saveUnfrozen() error {
 	return nil
 }
 
-// remove removes the stage file and syncs its directory.
-func (f *File) remove() error {
+// checkLock returns an error if f doesn't hold the stage file's lock, or if
+// the lock was removed while f held it (wrapping ErrLockBroken), so f
+// doesn't change the stage file or the object.
+func (f *File) checkLock() error {
 	if f.lock == nil {
 		return errNotLocked
+	}
+	return f.lock.verify()
+}
+
+// remove removes the stage file and syncs its directory.
+func (f *File) remove() error {
+	if err := f.checkLock(); err != nil {
+		return err
 	}
 	if err := os.Remove(f.path); err != nil {
 		return err
@@ -527,20 +565,43 @@ type heldLock struct {
 	contents []byte
 }
 
+// verify returns an error wrapping ErrLockBroken if l's lock file isn't the
+// one that l created: it was removed, and maybe created again by another
+// command. On systems where a file that's being removed can't be read, it
+// retries for up to unlockWait, then returns ErrLockBroken.
+func (l *heldLock) verify() error {
+	deadline := time.Now().Add(unlockWait)
+	for {
+		b, err := os.ReadFile(l.path)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			return fmt.Errorf("%w: %s was removed", ErrLockBroken, l.path)
+		case err != nil && removeBusy(err):
+			if time.Now().After(deadline) {
+				return fmt.Errorf("%w: %s is being removed: %w", ErrLockBroken, l.path, err)
+			}
+			time.Sleep(lockRetry)
+			continue
+		case err != nil:
+			return fmt.Errorf("checking the stage file lock: %w", err)
+		case !bytes.Equal(b, l.contents):
+			return fmt.Errorf("%w: %s was removed, and another command (%s) has locked the stage file since",
+				ErrLockBroken, l.path, lockHolder(b))
+		}
+		return nil
+	}
+}
+
 // release releases the lock by removing its lock file, if it's still the one
-// that l created. Otherwise, it returns an error wrapping ErrLockBroken. If
-// the lock file can't be removed, it returns an error wrapping
-// ErrNotUnlocked.
+// that l created (see verify). Otherwise, it returns an error wrapping
+// ErrLockBroken. If the lock file can't be read or removed, it returns an
+// error wrapping ErrNotUnlocked.
 func (l *heldLock) release() error {
-	b, err := os.ReadFile(l.path)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return fmt.Errorf("%w: %s was removed", ErrLockBroken, l.path)
-	case err != nil:
+	if err := l.verify(); err != nil {
+		if errors.Is(err, ErrLockBroken) {
+			return err
+		}
 		return fmt.Errorf("%w: %w", ErrNotUnlocked, err)
-	case !bytes.Equal(b, l.contents):
-		return fmt.Errorf("%w: %s was removed, and another command (%s) has locked the stage file since",
-			ErrLockBroken, l.path, lockHolder(b))
 	}
 	if err := removeLockFile(l.path); err != nil {
 		return fmt.Errorf("%w: %w", ErrNotUnlocked, err)
@@ -597,6 +658,8 @@ func tryLock(name string) (lock *heldLock, busy bool, err error) {
 		}
 		return nil, false, fmt.Errorf("locking the stage file: %w", err)
 	}
+	// the lock file is a line describing the holder, then a line with the
+	// token that identifies this lock
 	host, _ := os.Hostname()
 	contents := fmt.Appendf(nil, "pid %d on %s, since %s\n%s\n",
 		os.Getpid(), host, time.Now().Format(time.RFC3339), rand.Text())
