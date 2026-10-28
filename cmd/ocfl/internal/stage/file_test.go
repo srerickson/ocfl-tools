@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -317,6 +318,34 @@ func TestRemoveLock(t *testing.T) {
 		be.NilErr(t, err)
 		be.True(t, errors.Is(frozen.Resume(ctx, writable, nil), stage.ErrLockBroken))
 		be.True(t, errors.Is(frozen.Revert(ctx, writable, nil), stage.ErrLockBroken))
+		removed(t, frozen, before)
+		obj, err := readOnly.NewObject(ctx, "ark:123/abc")
+		be.NilErr(t, err)
+		be.Equal(t, ocfl.V(1), obj.Head())
+		be.True(t, errors.Is(frozen.Close(), stage.ErrLockBroken))
+	})
+
+	// The lock is removed while Resume checks the staged files, which may
+	// take a while: Resume doesn't update the object.
+	t.Run("broken holder stops, after checking staged files", func(t *testing.T) {
+		ctx := context.Background()
+		readOnly, writable := newRoots(t)
+		f := newFile(t, writable, "ark:123/abc")
+		be.NilErr(t, f.Stage().AddDir(ctx, writeFiles(t, map[string]string{"new.txt": "new"}), nil))
+		be.Nonzero(t, f.Commit(ctx, readOnly, "message", ocfl.User{Name: "name"}, nil))
+		be.NilErr(t, f.Close())
+		frozen, err := stage.OpenLocked(f.Path())
+		be.NilErr(t, err)
+		before, err := os.ReadFile(f.Path())
+		be.NilErr(t, err)
+		removeLock := &onLog{match: "starting object update", fn: func() {
+			if _, err := stage.RemoveLock(f.Path()); err != nil {
+				t.Error(err)
+			}
+		}}
+		logger := slog.New(slog.NewTextHandler(removeLock, nil))
+		be.True(t, errors.Is(frozen.Resume(ctx, writable, logger), stage.ErrLockBroken))
+		be.True(t, removeLock.done)
 		removed(t, frozen, before)
 		obj, err := readOnly.NewObject(ctx, "ark:123/abc")
 		be.NilErr(t, err)
@@ -1003,4 +1032,20 @@ func stageFileRemoved(t *testing.T, f *stage.File) {
 	t.Helper()
 	_, err := os.Stat(f.Path())
 	be.True(t, errors.Is(err, fs.ErrNotExist))
+}
+
+// onLog is a log writer that calls fn, once, when a log message containing
+// match is written to it.
+type onLog struct {
+	match string
+	fn    func()
+	done  bool
+}
+
+func (w *onLog) Write(p []byte) (int, error) {
+	if !w.done && strings.Contains(string(p), w.match) {
+		w.done = true
+		w.fn()
+	}
+	return len(p), nil
 }
