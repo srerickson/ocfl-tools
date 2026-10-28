@@ -311,9 +311,10 @@ the stage file is missing or can't be read. If there's no lock file, it says so
 and exits successfully. It can't be combined with `--force`. Removing the lock
 of a command that is still running lets another command change the stage at
 the same time, so check first that the process recorded in the lock isn't
-running. (If it was, that command fails when it finishes, saying that its
-lock was removed and that the stage should be checked; it doesn't remove a
-lock taken by another command since.)
+running. (If it was, that command stops before it next changes the stage or
+the object, and fails, saying that its lock was removed and that the stage
+should be checked. If it had already finished with the stage, such as by
+committing it and removing the stage file, it only warns.)
 
 ## Development
 

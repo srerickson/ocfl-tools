@@ -406,9 +406,11 @@ command that held the lock is printed. Use it to clear a lock left behind by
 a command that was killed, when commands that change the stage fail because
 it's locked. Removing the lock of a command that's still running lets another
 command change the stage at the same time, so check that no other ocfl
-command is using the stage first. (If it was, it fails when it finishes,
-saying that its lock was removed, and doesn't remove a newer lock.) --lock works even if the stage file
-doesn't exist or can't be read, and it can't be used with --force.`
+command is using the stage first. (If it was, it stops before it next
+changes the stage or the object, and fails, saying that its lock was
+removed. If it had already finished with the stage, such as by committing
+it, it only warns.) --lock works even if the stage file doesn't exist or
+can't be read, and it can't be used with --force.`
 }
 
 func (cmd *StageDeleteCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context) (err error) {
