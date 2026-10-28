@@ -889,6 +889,30 @@ func TestStage_DeleteLock(t *testing.T) {
 		_, err = os.Stat(stagePath)
 		be.NilErr(t, err)
 	})
+
+	// A command that can't release its lock says how to clear it. This
+	// subtest sets the process's umask: TestStage_DeleteLock isn't parallel.
+	t.Run("lock not released, frozen stage", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root can read a lock file without read permission")
+		}
+		runOK(t, env, "stage", "add", "-s", id, contentDir)
+		testutil.RunCLIInterrupt([]string{"stage", "commit", "-s", id, "-m", "message", "-n", "name"}, env, "starting object update", func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, context.Canceled))
+		})
+		// the lock file can't be read, so it isn't removed
+		testutil.SetUmask(t, 0o444)
+		testutil.RunCLI([]string{"stage", "add", "-s", id, contentDir}, env, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, stage.ErrNotUnlocked))
+			be.In(t, "the stage can't be changed", stderr)
+			be.In(t, "the stage file's lock couldn't be released: ", stderr)
+			be.In(t, "\n  to clear the lock: ocfl stage delete -s "+id+" --lock\n", stderr)
+		})
+		testutil.SetUmask(t, 0o022)
+		be.In(t, "removed lock file", runOK(t, env, "stage", "delete", "-s", id, "--lock"))
+		runOK(t, env, "stage", "commit", "-s", id, "--revert")
+		noLocks(t, stageCache)
+	})
 }
 
 // 'stage status' reports staged files whose content has changed since they

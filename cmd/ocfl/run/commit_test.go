@@ -10,6 +10,7 @@ import (
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/stage"
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/testutil"
 )
 
@@ -187,6 +188,43 @@ func TestCommit(t *testing.T) {
 		// the commit failed before the stage was frozen: it's removed
 		be.Equal(t, 0, len(stageIDs(t, stageCache)))
 		be.False(t, strings.Contains(runOK(t, env, "log", "--id", id), "second commit"))
+	})
+
+	// Another command creates the stage while the commit adds files, so the
+	// commit can't create it, and the commit's lock can't be released. This
+	// subtest sets the process's umask: TestCommit isn't parallel.
+	t.Run("stage created during commit, lock not released", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root can read a lock file without read permission")
+		}
+		const id = "object-09"
+		// the other command's stage file, made in another stage cache
+		otherCache := t.TempDir()
+		runOK(t, env, "stage", "new", "--id", id, "--stage-cache", otherCache)
+		otherIDs := stageIDs(t, otherCache)
+		be.Equal(t, 1, len(otherIDs))
+		name := otherIDs[0] + ".json"
+		short := otherIDs[0][:7]
+		// the stage cache exists, so it's readable under the umask below
+		be.NilErr(t, os.MkdirAll(stageCache, 0o755))
+		createStage := func() {
+			if err := os.Rename(filepath.Join(otherCache, name), filepath.Join(stageCache, name)); err != nil {
+				t.Error(err)
+			}
+		}
+		// the commit's lock file can't be read, so it isn't removed
+		testutil.SetUmask(t, 0o444)
+		testutil.RunCLIOnLog(context.Background(), commitArgs(id, "first commit"), env, "file added", createStage, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, stage.ErrNotUnlocked))
+			be.In(t, "a stage for "+id+" already exists: ", stderr)
+			be.In(t, "the stage file's lock couldn't be released: ", stderr)
+			be.In(t, "\n  to clear the lock: ocfl stage delete -s "+short+" --lock\n", stderr)
+		})
+		testutil.SetUmask(t, 0o022)
+		be.In(t, "removed lock file", runOK(t, env, "stage", "delete", "-s", short, "--lock"))
+		runOK(t, env, "stage", "delete", "-s", short)
+		noLocks(t, stageCache)
+		be.Equal(t, 0, len(stageIDs(t, stageCache)))
 	})
 }
 
