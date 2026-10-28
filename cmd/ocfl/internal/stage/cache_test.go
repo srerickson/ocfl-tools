@@ -119,6 +119,24 @@ func TestCache(t *testing.T) {
 		}
 	})
 
+	t.Run("ShortLockID", func(t *testing.T) {
+		shares := "dddddddde" + id4[9:] // shares a prefix with id4
+		for id, want := range map[string]string{
+			id1:    "aaaaaaaab",
+			id3:    "bbbbbbb",
+			id4:    "ddddddd",
+			shares: "dddddddde",
+		} {
+			got, err := cache.ShortLockID(id)
+			be.NilErr(t, err)
+			be.Equal(t, want, got)
+		}
+		// ShortID ignores the stage without a stage file
+		got, err := cache.ShortID(shares)
+		be.NilErr(t, err)
+		be.Equal(t, "ddddddd", got)
+	})
+
 	t.Run("List", func(t *testing.T) {
 		got, err := cache.List()
 		be.NilErr(t, err)
