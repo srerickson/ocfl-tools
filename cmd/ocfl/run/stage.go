@@ -717,8 +717,9 @@ func (f stageCacheFlag) cacheRef(kctx *kong.Context, cache stage.Cache, id strin
 	if flagGiven(kctx, "stage-cache") {
 		flags = append(flags, "--stage-cache", cache.Dir)
 	}
+	cacheFlags := slices.Clip(flags)
 	flags = append(flags, "-s", short)
-	return stageRef{path: cache.Path(id), flags: flags, cache: cache, id: id, shortID: short}, nil
+	return stageRef{path: cache.Path(id), flags: flags, cache: cache, cacheFlags: cacheFlags, id: id, shortID: short}, nil
 }
 
 // existingStageError returns the error for creating a stage when the stage
@@ -749,9 +750,10 @@ type stageRef struct {
 	flags []string
 
 	// if the stage file is in the stage cache:
-	cache   stage.Cache
-	id      string // stage ID
-	shortID string // the stage ID's shortest unique prefix, used in commands
+	cache      stage.Cache
+	cacheFlags []string // the flags in flags that name cache
+	id         string   // stage ID
+	shortID    string   // the stage ID's shortest unique prefix, used in commands
 }
 
 // command returns the command line for the 'ocfl stage' subcommand sub, using
@@ -818,19 +820,15 @@ func lockedError(err error, ref stageRef) error {
 // one that 'stage delete --lock' finds: unique among the stages with stage
 // files or lock files.
 func (r stageRef) clearLockCommand() string {
-	if r.id == "" || r.shortID == "" {
+	if r.id == "" {
 		return r.command("delete", "--lock")
 	}
-	short := r.id
-	for n := len(r.shortID); n < len(r.id); n++ {
-		if got, err := r.cache.FindLock(r.id[:n]); err == nil && got == r.id {
-			short = r.id[:n]
-			break
-		}
+	short, err := r.cache.ShortLockID(r.id)
+	if err != nil {
+		short = r.id
 	}
 	lockRef := r
-	lockRef.flags = slices.Clone(r.flags)
-	lockRef.flags[len(lockRef.flags)-1] = short // the flags end with -s and the short ID
+	lockRef.flags = append(slices.Clone(r.cacheFlags), "-s", short)
 	return lockRef.command("delete", "--lock")
 }
 
