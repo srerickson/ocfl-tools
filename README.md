@@ -197,6 +197,15 @@ ocfl stage status -s $STAGE
 ocfl stage commit -s $STAGE -m "update data" -n "My Name" -e me@example.net
 ```
 
+To list the stages in the stage cache, with their stage IDs (shortened),
+object IDs, and storage roots, run `ocfl stage` with no sub-command:
+
+```sh
+$ ocfl stage
+7iqedrt  ark://abc/123  file:///mnt/data/my-root
+ipmeqac  ark://abc/456  file:///mnt/data/other-root
+```
+
 The stage records its storage root, so `--root` is only used with
 `ocfl stage new`. To discard a stage that hasn't been committed, use
 `ocfl stage delete -s <stage-id>`.
@@ -235,7 +244,9 @@ ocfl stage --check-stat=minimal status -s <stage-id>
 before they change the object. (`ocfl commit` uses the stage cache, like
 `ocfl stage new`.) If a commit is interrupted (for example, with Ctrl-C) or
 fails, the object may be partially updated. The command exits with an error,
-keeps the stage, and prints the commands to finish or undo the commit:
+keeps the stage, and prints the commands to finish or undo the commit. (To
+find the stage's ID later, list the stages with `ocfl stage`, then check it
+with `ocfl stage status -s <stage-id>`.)
 
 ```sh
 # resume the commit
