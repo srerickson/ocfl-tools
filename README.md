@@ -185,18 +185,32 @@ configuration is invalid.
 
 A stage records changes to an object to be committed together as a new object
 version. Stage files store draft version state and *references* to local files
-with new content (not the content itself):
+with new content (not the content itself). Stages are saved in the stage cache
+directory, which has at most one stage for each storage root / object ID pair.
+`ocfl stage new` prints the new stage's ID; other `stage` commands name the
+stage with `-s` and the ID or a unique prefix of it:
 
 ```sh
-ocfl stage new -f my-stage.json --root /mnt/data/my-root --id ark://abc/123
-ocfl stage add -f my-stage.json my-files/
-ocfl stage status -f my-stage.json
-ocfl stage commit -f my-stage.json -m "update data" -n "My Name" -e me@example.net
+STAGE=$(ocfl stage new --root /mnt/data/my-root --id ark://abc/123)
+ocfl stage add -s $STAGE my-files/
+ocfl stage status -s $STAGE
+ocfl stage commit -s $STAGE -m "update data" -n "My Name" -e me@example.net
 ```
 
 The stage records its storage root, so `--root` is only used with
 `ocfl stage new`. To discard a stage that hasn't been committed, use
-`ocfl stage delete -f <path>`.
+`ocfl stage delete -s <stage-id>`.
+
+The stage cache is `ocfl-tools/stage` in the user's cache directory
+(`~/.cache` on Linux, `~/Library/Caches` on macOS, `%LocalAppData%` on
+Windows). Set a different directory with `--stage-cache` or
+`$OCFL_STAGE_CACHE`. To save a stage in a file of your choice instead, use
+`-f <path>` in place of `-s`.
+
+A stage's ID is derived from the storage root location and the object ID, as
+given. Different spellings of the same storage root (for example, through a
+symbolic link) have different stage IDs, so they don't prevent a second stage
+for the same object.
 
 ### Changes to staged files
 
@@ -212,27 +226,24 @@ stable, use `--check-stat=minimal` (or `OCFL_CHECK_STAT=minimal`) to compare
 only the size, modification time (in whole seconds), and mode:
 
 ```sh
-ocfl stage --check-stat=minimal status
+ocfl stage --check-stat=minimal status -s <stage-id>
 ```
 
 ### Interrupted commits
 
 `ocfl commit` and `ocfl stage commit` save the new version state in a stage
-file before they change the object. If a commit is interrupted (for example,
-with Ctrl-C) or fails, the object may be partially updated. The command exits
-with an error, keeps the stage file, and prints the commands to finish or undo
-the commit:
+before they change the object. (`ocfl commit` uses the stage cache, like
+`ocfl stage new`.) If a commit is interrupted (for example, with Ctrl-C) or
+fails, the object may be partially updated. The command exits with an error,
+keeps the stage, and prints the commands to finish or undo the commit:
 
 ```sh
 # resume the commit
-ocfl stage commit -f my-stage.json --resume
+ocfl stage commit -s $STAGE --resume
 
 # or undo the partial update, returning the stage to its uncommitted state
-ocfl stage commit -f my-stage.json --revert
+ocfl stage commit -s $STAGE --revert
 ```
-
-`ocfl commit` keeps its stage file in the temporary directory; the error
-message gives its path.
 
 If the object was changed after the stage was created, commit fails without
 modifying the object: `ocfl stage commit` returns the stage to its uncommitted
@@ -241,7 +252,7 @@ be run again. However, if the object is changed by something else *after* a
 commit was interrupted, the stage is effectively orphaned. In this case, the
 stage/commit can't be resumed or reverted: check the object with
 `ocfl validate`, then delete the stage with
-`ocfl stage delete -f <path> --force`.
+`ocfl stage delete -s <stage-id> --force`.
 
 ## Development
 

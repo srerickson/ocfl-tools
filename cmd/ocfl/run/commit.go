@@ -2,12 +2,11 @@ package run
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 
+	"github.com/alecthomas/kong"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
 
@@ -16,6 +15,8 @@ import (
 
 // CommitCmd is 'ocfl commit': it commits a directory as a new object version.
 type CommitCmd struct {
+	stageCacheFlag `embed:""`
+
 	ID       string `name:"id" short:"i" help:"The ID for the object to create or update"`
 	Message  string `name:"message" short:"m" help:"Message to include in the object version metadata"`
 	Name     string `name:"name" short:"n" ocflenv:"OCFL_USER_NAME" help:"Username to include in the object version metadata"`
@@ -27,12 +28,15 @@ type CommitCmd struct {
 
 func (cmd *CommitCmd) Help() string {
 	return `The new version's state is the contents of the directory. The commit is
-saved in a temporary stage file before the object is changed. If the commit
-is interrupted or fails, the stage file is kept, and the error message gives
-the 'ocfl stage commit' commands that resume or revert the commit.`
+saved as a stage in the stage cache (see 'ocfl stage --help') before the
+object is changed, and the stage is removed when the commit is complete. If
+the commit is interrupted or fails, the stage is kept, and the error message
+gives the 'ocfl stage commit' commands that resume or revert the commit. If
+the stage cache already has a stage for the object, commit or delete it
+first.`
 }
 
-func (cmd *CommitCmd) Run(ctx context.Context, env *cmdEnv) error {
+func (cmd *CommitCmd) Run(ctx context.Context, env *cmdEnv, kctx *kong.Context) error {
 	alg, err := digest.DefaultRegistry().Get(cmd.Alg)
 	if err != nil {
 		return err
@@ -48,6 +52,14 @@ func (cmd *CommitCmd) Run(ctx context.Context, env *cmdEnv) error {
 	if err := checkWritable(root); err != nil {
 		return err
 	}
+	ref, err := cmd.objectRef(env, kctx, rootLoc, cmd.ID)
+	if err != nil {
+		return err
+	}
+	// fail before digesting files if the stage exists
+	if err := ref.checkNew(); err != nil {
+		return err
+	}
 	s, err := newStage(ctx, root, rootLoc, cmd.ID, alg)
 	if err != nil {
 		return err
@@ -57,10 +69,6 @@ func (cmd *CommitCmd) Run(ctx context.Context, env *cmdEnv) error {
 		opts = append(opts, stage.AddWithoutHidden())
 	}
 	if err := s.AddDir(ctx, absPath, env.logger, opts...); err != nil {
-		return err
-	}
-	ref, err := fileRef(tempStageFile())
-	if err != nil {
 		return err
 	}
 	f, err := ref.create(s)
@@ -92,10 +100,4 @@ func (cmd *CommitCmd) Run(ctx context.Context, env *cmdEnv) error {
 		return conflictError(s, err, "  to commit to the object's current version, run the command again")
 	}
 	return err
-}
-
-// tempStageFile returns the path of a new stage file in the temporary
-// directory.
-func tempStageFile() string {
-	return filepath.Join(os.TempDir(), "ocfl-commit-"+rand.Text()+".json")
 }

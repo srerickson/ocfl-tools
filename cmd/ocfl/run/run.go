@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -257,6 +258,43 @@ func (env *cmdEnv) openRoot(ctx context.Context, loc string) (*ocfl.Root, error)
 		return nil, fmt.Errorf("reading OCFL storage root %s: %w", rootcnf, err)
 	}
 	return root, nil
+}
+
+// userCacheDir returns the user's cache directory, like [os.UserCacheDir], but
+// using env.getenv.
+func (env *cmdEnv) userCacheDir() (string, error) {
+	switch runtime.GOOS {
+	case "windows":
+		dir := env.getenv("LocalAppData")
+		if dir == "" {
+			return "", errors.New("%LocalAppData% is not defined")
+		}
+		return dir, nil
+	case "darwin", "ios":
+		dir := env.getenv("HOME")
+		if dir == "" {
+			return "", errors.New("$HOME is not defined")
+		}
+		return filepath.Join(dir, "Library", "Caches"), nil
+	case "plan9":
+		dir := env.getenv("home")
+		if dir == "" {
+			return "", errors.New("$home is not defined")
+		}
+		return filepath.Join(dir, "lib", "cache"), nil
+	}
+	dir := env.getenv("XDG_CACHE_HOME")
+	if dir == "" {
+		home := env.getenv("HOME")
+		if home == "" {
+			return "", errors.New("neither $XDG_CACHE_HOME nor $HOME are defined")
+		}
+		return filepath.Join(home, ".cache"), nil
+	}
+	if !filepath.IsAbs(dir) {
+		return "", errors.New("path in $XDG_CACHE_HOME is relative")
+	}
+	return dir, nil
 }
 
 // addCloser registers c to be closed by closeAll.
