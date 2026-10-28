@@ -928,6 +928,33 @@ func TestStage_DeleteLock(t *testing.T) {
 		be.Equal(t, "", runOK(t, env, "validate", "--id", "object-04"))
 	})
 
+	// The lock of a resumed commit is removed while the staged files are
+	// checked: the object isn't changed.
+	t.Run("lock removed before resume updates the object", func(t *testing.T) {
+		otherID := strings.TrimSpace(runOK(t, env, "stage", "new", "--id", "object-07"))
+		runOK(t, env, "stage", "add", "-s", otherID, contentDir)
+		commit := []string{"stage", "commit", "-s", otherID, "-m", "message", "-n", "name"}
+		testutil.RunCLIInterrupt(commit, env, "starting object update", func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, context.Canceled))
+		})
+		clearLock := func() { runOK(t, env, "stage", "delete", "-s", otherID, "--lock") }
+		args := []string{"stage", "commit", "-s", otherID, "--resume"}
+		testutil.RunCLIOnLog(context.Background(), args, env, "starting object update", clearLock, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, stage.ErrLockBroken))
+			be.In(t, "commit of object-07 (v1) stopped: ", stderr)
+			be.In(t, "\n  another command cleared the stage's lock; this command didn't change the object\n", stderr)
+			hint := "check it with: ocfl stage status -s " + otherID
+			be.Equal(t, 1, strings.Count(stderr, hint))
+			be.False(t, strings.Contains(stderr, "partially updated"))
+		})
+		noLocks(t, stageCache)
+		testutil.RunCLI([]string{"ls", "--id", "object-07"}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+		})
+		runOK(t, env, "stage", "commit", "-s", otherID, "--resume")
+		be.Equal(t, "", runOK(t, env, "validate", "--id", "object-07"))
+	})
+
 	// A command that can't release its lock says how to clear it. This
 	// subtest sets the process's umask: TestStage_DeleteLock isn't parallel.
 	t.Run("lock not released, frozen stage", func(t *testing.T) {

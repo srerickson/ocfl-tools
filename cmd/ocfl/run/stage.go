@@ -834,11 +834,17 @@ func lockError(err error, ref stageRef) error {
 	case errors.Is(err, stage.ErrNotUnlocked):
 		hint = "to clear the lock: " + ref.clearLockCommand()
 	case errors.Is(err, stage.ErrLockBroken):
-		hint = "another command may have changed the stage at the same time: check it with: " + ref.command("status")
+		hint = lockBrokenHint(ref)
 	default:
 		return err
 	}
 	return fmt.Errorf("%w\n  %s", err, hint)
+}
+
+// lockBrokenHint says what to do about the stage file ref, whose lock was
+// removed while a command held it.
+func lockBrokenHint(ref stageRef) string {
+	return "another command may have changed the stage at the same time: check it with: " + ref.command("status")
 }
 
 // clearLockCommand returns the command line that clears the lock on r's stage
@@ -998,6 +1004,12 @@ func closeStage(env *cmdEnv, f *stage.File, ref stageRef, done string, err *erro
 			return
 		}
 	}
+	if errors.Is(closeErr, stage.ErrLockBroken) && *err != nil &&
+		strings.Contains((*err).Error(), lockBrokenHint(ref)) {
+		// *err already says what to do
+		*err = errors.Join(*err, closeErr)
+		return
+	}
 	*err = errors.Join(*err, lockError(closeErr, ref))
 }
 
@@ -1040,6 +1052,11 @@ func commitError(root *ocfl.Root, s *stage.Stage, ref stageRef, err error) error
 	switch {
 	case errors.Is(err, stage.ErrNotRemoved):
 		lines = []string{commit + ": " + err.Error(), "  to remove it: " + resume}
+	case errors.Is(err, stage.ErrLockBroken):
+		// the lock is checked before the object is updated
+		lines = []string{commit + " stopped: " + err.Error(),
+			"  another command cleared the stage's lock; this command didn't change the object",
+			"  " + lockBrokenHint(ref)}
 	case errors.Is(err, context.Canceled):
 		lines = []string{commit + " was interrupted; the object may be partially updated",
 			objPath, "  to resume: " + resume, revert}
