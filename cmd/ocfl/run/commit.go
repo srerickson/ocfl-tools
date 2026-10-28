@@ -36,7 +36,7 @@ the stage cache already has a stage for the object, commit or delete it
 first.`
 }
 
-func (cmd *CommitCmd) Run(ctx context.Context, env *cmdEnv, kctx *kong.Context) error {
+func (cmd *CommitCmd) Run(ctx context.Context, env *cmdEnv, kctx *kong.Context) (err error) {
 	alg, err := digest.DefaultRegistry().Get(cmd.Alg)
 	if err != nil {
 		return err
@@ -75,6 +75,7 @@ func (cmd *CommitCmd) Run(ctx context.Context, env *cmdEnv, kctx *kong.Context) 
 	if err != nil {
 		return fmt.Errorf("saving the stage file before commit: %w", err)
 	}
+	defer closeStage(f, &err)
 	err = f.Commit(ctx, root, cmd.Message, newUser(cmd.Name, cmd.Email), env.logger)
 	var notSaved *stage.DraftNotSavedError
 	switch {

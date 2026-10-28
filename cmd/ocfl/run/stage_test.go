@@ -555,6 +555,119 @@ func TestStage_StatusUpstream(t *testing.T) {
 	})
 }
 
+// 'stage status' works while another command has the stage file locked, but
+// it doesn't save refreshed file stats.
+func TestStage_StatusLocked(t *testing.T) {
+	_, fixtures := testutil.TempDirTestData(t, `testdata/content-fixture`)
+	contentDir := fixtures[0]
+	stagePath := filepath.Join(t.TempDir(), "stage.json")
+	lockPath := stagePath + ".lock"
+	env := map[string]string{"OCFL_ROOT": filepath.Join(t.TempDir(), "ocfl")}
+	runOK(t, env, "init-root", "--layout", "0003-hash-and-id-n-tuple-storage-layout")
+	runOK(t, env, "stage", "new", "-f", stagePath, "--id", "object-01")
+	runOK(t, env, "stage", "add", "-f", stagePath, contentDir)
+	// a staged file's stat changes, so status refreshes it
+	mtime := time.Now().Add(-time.Hour)
+	be.NilErr(t, os.Chtimes(filepath.Join(contentDir, "hello.csv"), mtime, mtime))
+	before, err := os.ReadFile(stagePath)
+	be.NilErr(t, err)
+	be.NilErr(t, os.WriteFile(lockPath, []byte("pid 1 on other-host\n"), 0o644))
+	out := runOK(t, env, "stage", "status", "-f", stagePath)
+	be.In(t, "stage has changes to commit", out)
+	after, err := os.ReadFile(stagePath)
+	be.NilErr(t, err)
+	be.Equal(t, string(before), string(after))
+	_, err = os.Stat(lockPath)
+	be.NilErr(t, err)
+	// once the lock is released, the refreshed stats are saved
+	be.NilErr(t, os.Remove(lockPath))
+	runOK(t, env, "stage", "status", "-f", stagePath)
+	after, err = os.ReadFile(stagePath)
+	be.NilErr(t, err)
+	be.Unequal(t, string(before), string(after))
+	noLocks(t, filepath.Dir(stagePath))
+}
+
+// Commands that change a stage file lock it, so they fail if another command
+// has it locked, and they release the lock when they're done.
+func TestStage_Locked(t *testing.T) {
+	tmpDir, fixtures := testutil.TempDirTestData(t, `testdata/content-fixture`)
+	contentDir := fixtures[0]
+	stageCache := filepath.Join(tmpDir, "stage-cache")
+	env := map[string]string{
+		"OCFL_ROOT":        filepath.Join(tmpDir, "ocfl"),
+		"OCFL_STAGE_CACHE": stageCache,
+	}
+	runOK(t, env, "init-root", "--layout", "0003-hash-and-id-n-tuple-storage-layout")
+	id := strings.TrimSpace(runOK(t, env, "stage", "new", "--id", "object-01"))
+	noLocks(t, stageCache)
+	runOK(t, env, "stage", "add", "-s", id, contentDir)
+	noLocks(t, stageCache)
+	runOK(t, env, "stage", "rm", "-s", id, "hello.csv")
+	noLocks(t, stageCache)
+	ids := stageIDs(t, stageCache)
+	be.Equal(t, 1, len(ids))
+	stagePath := filepath.Join(stageCache, ids[0]+".json")
+	lockPath := stagePath + ".lock"
+
+	t.Run("writers fail", func(t *testing.T) {
+		be.NilErr(t, os.WriteFile(lockPath, []byte("pid 1 on other-host\n"), 0o644))
+		defer os.Remove(lockPath)
+		before, err := os.ReadFile(stagePath)
+		be.NilErr(t, err)
+		for _, args := range [][]string{
+			{"stage", "add", "-s", id, contentDir},
+			{"stage", "rm", "-s", id, "folder1", "-r"},
+			{"stage", "commit", "-s", id, "-m", "message", "-n", "name"},
+			{"stage", "commit", "-s", id, "--resume"},
+			{"stage", "commit", "-s", id, "--revert"},
+			{"stage", "delete", "-s", id, "--force"},
+		} {
+			testutil.RunCLI(args, env, func(err error, stdout, stderr string) {
+				if !errors.Is(err, stage.ErrLocked) {
+					t.Fatalf("ocfl %s: want ErrLocked, got: %v", strings.Join(args, " "), err)
+				}
+				be.In(t, "locked by another command (pid 1 on other-host)", stderr)
+				be.In(t, lockPath+" exists", stderr)
+				be.In(t, "remove the lock file", stderr)
+			})
+		}
+		after, err := os.ReadFile(stagePath)
+		be.NilErr(t, err)
+		be.Equal(t, string(before), string(after))
+		// the lock isn't removed
+		_, err = os.Stat(lockPath)
+		be.NilErr(t, err)
+		// commands that don't change the stage work
+		be.In(t, "stage has changes", runOK(t, env, "stage", "status", "-s", id))
+		be.In(t, "folder1/file.txt", runOK(t, env, "stage", "ls", "-s", id))
+	})
+
+	t.Run("released after errors", func(t *testing.T) {
+		testutil.RunCLI([]string{"stage", "rm", "-s", id, "missing.txt"}, env, func(err error, stdout, stderr string) {
+			be.Nonzero(t, err)
+		})
+		noLocks(t, stageCache)
+		testutil.RunCLI([]string{"stage", "commit", "-s", id, "--resume"}, env, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, stage.ErrNotFrozen))
+		})
+		noLocks(t, stageCache)
+		testutil.RunCLIInterrupt([]string{"stage", "commit", "-s", id, "-m", "message", "-n", "name"}, env, "starting object update", func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, context.Canceled))
+		})
+		noLocks(t, stageCache)
+		testutil.RunCLI([]string{"stage", "add", "-s", id, contentDir}, env, func(err error, stdout, stderr string) {
+			be.In(t, "the stage can't be changed", stderr)
+		})
+		noLocks(t, stageCache)
+		runOK(t, env, "stage", "commit", "-s", id, "--revert")
+		noLocks(t, stageCache)
+		runOK(t, env, "stage", "commit", "-s", id, "-m", "message", "-n", "name")
+		noLocks(t, stageCache)
+		be.Equal(t, 0, len(stageIDs(t, stageCache)))
+	})
+}
+
 // 'stage status' reports staged files whose content has changed since they
 // were added, like 'git status'. Files whose stat changed without a change to
 // their content aren't reported.
@@ -942,8 +1055,12 @@ func TestStage_CommitInterrupted(t *testing.T) {
 			be.In(t, "\n  the stage file couldn't be restored: ", stderr)
 			be.In(t, "\n  to delete it: ocfl stage delete -f "+stagePath+" --force\n", stderr)
 			be.False(t, strings.Contains(stderr, "can't be resumed or reverted"))
+			// the lock can't be released either
+			be.In(t, "unlocking the stage file: ", stderr)
+			be.In(t, "remove the lock file "+stagePath+".lock", stderr)
 		})
 		unlock()
+		removeStaleLock(t, filepath.Dir(stagePath))
 		be.True(t, readStage(t, stagePath).Frozen())
 		runOK(t, env, "stage", "delete", "-f", stagePath, "--force")
 		be.Equal(t, "", runOK(t, env, "validate", "--id", objID))
@@ -958,8 +1075,10 @@ func TestStage_CommitInterrupted(t *testing.T) {
 			be.In(t, "commit of "+objID+" (v1): the commit is complete, but the stage file couldn't be removed: ", stderr)
 			be.Equal(t, 1, strings.Count(stderr, "couldn't be removed"))
 			be.In(t, "to remove it: ocfl stage commit -f "+stagePath+" --resume\n", stderr)
+			be.In(t, "unlocking the stage file: ", stderr)
 		})
 		unlock()
+		removeStaleLock(t, filepath.Dir(stagePath))
 		runOK(t, env, "stage", "commit", "-f", stagePath, "--resume")
 		_, err := os.Stat(stagePath)
 		be.True(t, errors.Is(err, fs.ErrNotExist))
@@ -970,14 +1089,16 @@ func TestStage_CommitInterrupted(t *testing.T) {
 		env, stagePath, _ := setup(t)
 		interrupt(t, env, stagePath, commitArgs(stagePath, "first commit"), "v1")
 		lock, unlock := testutil.LockDir(t, filepath.Dir(stagePath))
-		lock()
-		testutil.RunCLI([]string{"stage", "commit", "-f", stagePath, "--revert"}, env, func(err error, stdout, stderr string) {
+		// the stage file can't be changed once it's locked
+		testutil.RunCLIOnLog(context.Background(), []string{"stage", "commit", "-f", stagePath, "--revert"}, env, "reverting object update", lock, func(err error, stdout, stderr string) {
 			be.Nonzero(t, err)
 			be.In(t, "revert of "+objID+" (v1): the commit was reverted, but the stage file couldn't be saved: ", stderr)
 			be.In(t, "don't resume it", stderr)
 			be.In(t, "to finish reverting: ocfl stage commit -f "+stagePath+" --revert\n", stderr)
+			be.In(t, "unlocking the stage file: ", stderr)
 		})
 		unlock()
+		removeStaleLock(t, filepath.Dir(stagePath))
 		be.True(t, readStage(t, stagePath).Frozen())
 		runOK(t, env, "stage", "commit", "-f", stagePath, "--revert")
 		be.False(t, readStage(t, stagePath).Frozen())
@@ -1515,6 +1636,24 @@ func commitVersion(t *testing.T, env map[string]string, id, msg string) {
 	dir := t.TempDir()
 	be.NilErr(t, os.WriteFile(filepath.Join(dir, "other.txt"), []byte(msg), 0o644))
 	runOK(t, env, "commit", dir, "--id", id, "-m", msg, "-n", "name", "--stage-cache", t.TempDir())
+}
+
+// noLocks checks that there are no stage file locks in dir.
+func noLocks(t *testing.T, dir string) {
+	t.Helper()
+	locks, err := filepath.Glob(filepath.Join(dir, "*.lock"))
+	be.NilErr(t, err)
+	be.Equal(t, 0, len(locks))
+}
+
+// removeStaleLock removes the stage file lock left in dir by a command that
+// couldn't remove it, as a user would.
+func removeStaleLock(t *testing.T, dir string) {
+	t.Helper()
+	locks, err := filepath.Glob(filepath.Join(dir, "*.lock"))
+	be.NilErr(t, err)
+	be.Equal(t, 1, len(locks))
+	be.NilErr(t, os.Remove(locks[0]))
 }
 
 // readStage reads the stage in the stage file stagePath.

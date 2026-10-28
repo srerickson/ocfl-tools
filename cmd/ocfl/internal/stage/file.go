@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/srerickson/ocfl-go"
 )
@@ -28,7 +29,16 @@ var (
 	// ErrNotRemoved is returned when a commit is complete, but its stage file
 	// couldn't be removed. Resuming the commit removes it.
 	ErrNotRemoved = errors.New("the commit is complete, but the stage file couldn't be removed")
+
+	// ErrLocked is returned when a stage file can't be locked because it's
+	// locked by another command: its lock file exists. The lock file is the
+	// stage file's name with ".lock" appended.
+	ErrLocked = errors.New("the stage file is locked by another command")
 )
+
+// errNotLocked is returned by the methods that change the stage file when the
+// File doesn't hold its lock.
+var errNotLocked = errors.New("the stage file isn't locked: it can't be changed")
 
 // DraftNotSavedError is returned by [File.Commit] when the object has changed
 // since the stage was created, so the commit failed without changing the
@@ -54,6 +64,14 @@ func (e *DraftNotSavedError) Unwrap() []error { return []error{e.Err, e.SaveErr}
 // stage with [Stage.AddDir], [Stage.AddFile] or [Stage.Remove], save it with
 // [File.Save].
 //
+// Only a File that holds the stage file's lock can change the file: one
+// returned by [OpenLocked] or [Create], until it's closed with [File.Close].
+// The lock is a lock file, the stage file's name with ".lock" appended, so
+// that two commands can't change the same stage file, and the stage in a
+// locked File is always the one in the stage file. A File returned by [Open]
+// can be read and checked, but its methods that change the file return an
+// error.
+//
 // A commit has two phases. [File.Commit] freezes the stage with the new
 // version's metadata and saves it before it changes the object, so that if
 // the commit is interrupted or fails, the frozen stage in the file is all
@@ -65,28 +83,48 @@ func (e *DraftNotSavedError) Unwrap() []error { return []error{e.Err, e.SaveErr}
 type File struct {
 	path  string
 	stage *Stage
+	saved []byte // the stage file's contents when it was last read or written
+	lock  string // the lock file, if f holds the lock
 }
 
-// Open reads the stage file name.
+// Open reads the stage file name without locking it. The File can be read and
+// checked, but it can't change the stage file: use [OpenLocked] for that.
 func Open(name string) (*File, error) {
-	b, err := os.ReadFile(name)
+	return read(name)
+}
+
+// OpenLocked locks the stage file name, then reads it. The lock is held until
+// [File.Close] is called. If the stage file is locked by another command,
+// OpenLocked waits for a moment (Check may lock it briefly), then returns an
+// error wrapping [ErrLocked], which names the lock file. If OpenLocked returns
+// an error, the lock isn't held.
+func OpenLocked(name string) (*File, error) {
+	lock, err := lockFile(name)
 	if err != nil {
 		return nil, err
 	}
-	var s Stage
-	if err := json.Unmarshal(b, &s); err != nil {
-		return nil, fmt.Errorf("reading stage file %s: %w", name, err)
+	f, err := read(name)
+	if err != nil {
+		return nil, errors.Join(err, unlockFile(lock))
 	}
-	return &File{path: name, stage: &s}, nil
+	f.lock = lock
+	return f, nil
 }
 
-// Create saves s in the new stage file name. If the file exists, it isn't
-// replaced: Create returns an error that wraps [fs.ErrExist].
+// Create locks the new stage file name and saves s in it. The lock is held
+// until [File.Close] is called. If the file exists, it isn't replaced: Create
+// returns an error that wraps [fs.ErrExist]. If it's locked by another
+// command, Create returns an error wrapping [ErrLocked]. If Create returns an
+// error, the lock isn't held.
 func Create(name string, s *Stage) (*File, error) {
 	if s == nil {
 		panic("stage.Create: nil stage")
 	}
-	err := write(name, s, func(tmp string) error {
+	lock, err := lockFile(name)
+	if err != nil {
+		return nil, err
+	}
+	b, err := write(name, s, func(tmp string) error {
 		err := os.Link(tmp, name)
 		if err == nil || errors.Is(err, fs.ErrExist) {
 			return err
@@ -105,9 +143,9 @@ func Create(name string, s *Stage) (*File, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, unlockFile(lock))
 	}
-	return &File{path: name, stage: s}, nil
+	return &File{path: name, stage: s, saved: b, lock: lock}, nil
 }
 
 // Path returns the path of the stage file.
@@ -116,24 +154,52 @@ func (f *File) Path() string { return f.path }
 // Stage returns the stage saved in the file.
 func (f *File) Stage() *Stage { return f.stage }
 
+// Close releases the stage file's lock, if f holds it. After Close, f can't
+// change the stage file. Calling Close again does nothing.
+func (f *File) Close() error {
+	if f.lock == "" {
+		return nil
+	}
+	lock := f.lock
+	f.lock = ""
+	return unlockFile(lock)
+}
+
 // Save saves the stage in the file. The file is replaced atomically, so an
 // interrupted Save leaves the previous stage file in place.
 func (f *File) Save() error {
-	return write(f.path, f.stage, func(tmp string) error { return os.Rename(tmp, f.path) })
+	if f.lock == "" {
+		return errNotLocked
+	}
+	b, err := write(f.path, f.stage, func(tmp string) error { return os.Rename(tmp, f.path) })
+	if err != nil {
+		return err
+	}
+	f.saved = b
+	return nil
 }
 
 // Check is like [Stage.Check], but it also saves the refreshed records of
 // unchanged files, so the next check doesn't read them. Like 'git status',
-// saving them is opportunistic: if it fails, a warning is logged to logger,
-// which may be nil.
+// saving them is opportunistic, and Check doesn't need the stage file's lock.
+// If f doesn't hold the lock, Check takes it to save the records, but only if
+// the stage file hasn't changed since f read it. If the file is locked by
+// another command, or it has been changed or removed, the records aren't
+// saved. That, or an error saving them, is logged to logger, which may be
+// nil.
 func (f *File) Check(ctx context.Context, logger *slog.Logger) (*CheckResult, error) {
 	result, err := f.stage.Check(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if result.Refreshed {
-		if err := f.Save(); err != nil {
-			loggerOrDiscard(logger).Warn("couldn't save refreshed file stats in the stage file", "err", err)
+		logger = loggerOrDiscard(logger)
+		err := f.saveRefreshed()
+		switch {
+		case errors.Is(err, ErrLocked), errors.Is(err, errChanged):
+			logger.Info("refreshed file stats weren't saved in the stage file", "reason", err)
+		case err != nil:
+			logger.Warn("couldn't save refreshed file stats in the stage file", "err", err)
 		}
 	}
 	return result, nil
@@ -175,6 +241,9 @@ func (f *File) Discard() error { return f.remove() }
 func (f *File) Commit(ctx context.Context, root *ocfl.Root, msg string, user ocfl.User, logger *slog.Logger) error {
 	if root == nil {
 		panic("stage.File.Commit: nil root")
+	}
+	if f.lock == "" {
+		return errNotLocked
 	}
 	s := f.stage
 	if s.Frozen() {
@@ -219,6 +288,9 @@ func (f *File) Resume(ctx context.Context, root *ocfl.Root, logger *slog.Logger)
 	if root == nil {
 		panic("stage.File.Resume: nil root")
 	}
+	if f.lock == "" {
+		return errNotLocked
+	}
 	if !f.stage.Frozen() {
 		return ErrNotFrozen
 	}
@@ -252,11 +324,14 @@ func (f *File) Resume(ctx context.Context, root *ocfl.Root, logger *slog.Logger)
 // an error wrapping [ocfl.ErrUpdateConflict]. If the commit is reverted, but
 // the draft can't be saved, Revert returns an error and the stage is a draft,
 // but the stage file still has the frozen stage: its commit must not be
-// resumed. Reverting it again (see [Open]) finishes reverting. Progress is
-// logged to logger, which may be nil.
+// resumed. Reverting it again (see [OpenLocked]) finishes reverting. Progress
+// is logged to logger, which may be nil.
 func (f *File) Revert(ctx context.Context, root *ocfl.Root, logger *slog.Logger) error {
 	if root == nil {
 		panic("stage.File.Revert: nil root")
+	}
+	if f.lock == "" {
+		return errNotLocked
 	}
 	s := f.stage
 	if !s.Frozen() {
@@ -307,6 +382,9 @@ func (f *File) saveUnfrozen() error {
 
 // remove removes the stage file and syncs its directory.
 func (f *File) remove() error {
+	if f.lock == "" {
+		return errNotLocked
+	}
 	if err := os.Remove(f.path); err != nil {
 		return err
 	}
@@ -314,15 +392,117 @@ func (f *File) remove() error {
 	return nil
 }
 
-// write writes s as JSON to a temporary file in name's directory, then calls
-// place to move it to name. The temporary file is removed if it's still there
-// when place returns. The directory is synced after place succeeds, so the
-// file isn't lost if the system crashes. If name exists, the new file gets its
-// mode; otherwise, it gets mode 0644 less the umask.
-func write(name string, s *Stage, place func(tmp string) error) error {
-	b, err := json.Marshal(s)
+// saveRefreshed saves the stage after a check refreshed its records. If f
+// doesn't hold the lock, it tries once to take it, and saves the stage only if
+// the stage file's contents are the ones f read: otherwise it returns an
+// error wrapping errChanged. If the file is locked, it returns an error
+// wrapping ErrLocked.
+func (f *File) saveRefreshed() (err error) {
+	if f.lock != "" {
+		return f.Save()
+	}
+	lock, err := tryLock(f.path)
 	if err != nil {
 		return err
+	}
+	f.lock = lock
+	defer func() { err = errors.Join(err, f.Close()) }()
+	b, err := os.ReadFile(f.path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("%w: it was removed", errChanged)
+	case err != nil:
+		return err
+	case !bytes.Equal(b, f.saved):
+		return errChanged
+	}
+	return f.Save()
+}
+
+// errChanged is returned by saveRefreshed when the stage file has changed
+// since the File read it.
+var errChanged = errors.New("the stage file was changed by another command")
+
+// read reads the stage file name, without locking it.
+func read(name string) (*File, error) {
+	b, err := os.ReadFile(name)
+	if err != nil {
+		return nil, err
+	}
+	var s Stage
+	if err := json.Unmarshal(b, &s); err != nil {
+		return nil, fmt.Errorf("reading stage file %s: %w", name, err)
+	}
+	return &File{path: name, stage: &s, saved: b}, nil
+}
+
+// lockWait is how long lockFile waits for a locked stage file, so a command
+// doesn't fail because 'stage status' locked the file briefly to save
+// refreshed records.
+var lockWait = time.Second
+
+// lockFile locks the stage file name, waiting up to lockWait if it's locked,
+// and returns the lock file's name. If it's still locked, it returns an error
+// wrapping ErrLocked.
+func lockFile(name string) (string, error) {
+	deadline := time.Now().Add(lockWait)
+	for {
+		lock, err := tryLock(name)
+		if !errors.Is(err, ErrLocked) || time.Now().After(deadline) {
+			return lock, err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// tryLock locks the stage file name by creating its lock file, which records
+// the process that holds the lock, and returns the lock file's name. If the
+// lock file exists, it returns an error wrapping ErrLocked, which names the
+// lock file and what it records.
+func tryLock(name string) (string, error) {
+	lock := name + ".lock"
+	f, err := os.OpenFile(lock, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if errors.Is(err, fs.ErrExist) {
+		owner := "unknown process"
+		if b, err := os.ReadFile(lock); err == nil && len(bytes.TrimSpace(b)) > 0 {
+			owner = string(bytes.TrimSpace(b))
+		}
+		return "", fmt.Errorf("%w (%s): %s exists; if no other ocfl command is using the stage, remove the lock file",
+			ErrLocked, owner, lock)
+	}
+	if err != nil {
+		return "", fmt.Errorf("locking the stage file: %w", err)
+	}
+	host, _ := os.Hostname()
+	_, err = fmt.Fprintf(f, "pid %d on %s, since %s\n", os.Getpid(), host, time.Now().Format(time.RFC3339))
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		os.Remove(lock)
+		return "", fmt.Errorf("locking the stage file: %w", err)
+	}
+	return lock, nil
+}
+
+// unlockFile releases a stage file's lock by removing its lock file, lock.
+func unlockFile(lock string) error {
+	if err := os.Remove(lock); err != nil {
+		return fmt.Errorf("unlocking the stage file: %w; if no other ocfl command is using the stage, remove the lock file %s", err, lock)
+	}
+	return nil
+}
+
+// write writes s as JSON to a temporary file in name's directory, then calls
+// place to move it to name, and returns what it wrote. The temporary file is
+// removed if it's still there when place returns. The directory is synced
+// after place succeeds, so the file isn't lost if the system crashes. If name
+// exists, the new file gets its mode; otherwise, it gets mode 0644 less the
+// umask.
+func write(name string, s *Stage, place func(tmp string) error) ([]byte, error) {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return nil, err
 	}
 	var perm fs.FileMode
 	info, err := os.Stat(name)
@@ -330,34 +510,34 @@ func write(name string, s *Stage, place func(tmp string) error) error {
 	case err == nil:
 		perm = info.Mode().Perm()
 	case !errors.Is(err, fs.ErrNotExist):
-		return err
+		return nil, err
 	}
 	tmp, err := createTemp(filepath.Dir(name), "."+filepath.Base(name)+".")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer os.Remove(tmp.Name()) // fails after a successful rename
 	if _, err := io.Copy(tmp, bytes.NewReader(b)); err != nil {
 		tmp.Close()
-		return err
+		return nil, err
 	}
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
-		return err
+		return nil, err
 	}
 	if err := tmp.Close(); err != nil {
-		return err
+		return nil, err
 	}
 	if info != nil {
 		if err := os.Chmod(tmp.Name(), perm); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := place(tmp.Name()); err != nil {
-		return err
+		return nil, err
 	}
 	syncDir(filepath.Dir(name))
-	return nil
+	return b, nil
 }
 
 // createTemp creates a new file in dir, named prefix followed by a random
