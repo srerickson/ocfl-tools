@@ -41,3 +41,27 @@ func TempDirTestData(t *testing.T, subdirs ...string) (string, []string) {
 	}
 	return tmpDir, tmpSubs
 }
+
+// LockDir returns functions that make the directory dir read-only, so files
+// in it can't be created, replaced or removed, and that make it writable
+// again. It's made writable when the test ends, too. lock may be called from
+// any goroutine. The test is skipped if it's run as root, which can write to
+// read-only directories.
+func LockDir(t *testing.T, dir string) (lock, unlock func()) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("skipping: read-only directories can be written by root")
+	}
+	lock = func() {
+		if err := os.Chmod(dir, 0o500); err != nil {
+			t.Error("locking directory:", err)
+		}
+	}
+	unlock = func() {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			t.Error("unlocking directory:", err)
+		}
+	}
+	t.Cleanup(unlock)
+	return lock, unlock
+}

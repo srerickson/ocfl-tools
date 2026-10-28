@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -19,12 +20,15 @@ import (
 	"github.com/srerickson/ocfl-tools/cmd/ocfl/internal/statcache"
 )
 
+// StageCmd is 'ocfl stage': commands for preparing and committing object
+// updates.
 type StageCmd struct {
 	File      string `name:"file" short:"f" default:"ocfl-stage.json" help:"path to stage file"`
 	CheckStat string `name:"check-stat" enum:"default,minimal" default:"default" ocflenv:"OCFL_CHECK_STAT" help:"file metadata compared to find staged files that haven't changed: 'default' or 'minimal' (size, mtime in seconds, and mode; for network file systems)"`
 
 	Add    StageAddCmd    `cmd:"" help:"Add a file or directory to the stage"`
 	Commit StageCommitCmd `cmd:"" help:"Commit the stage as a new object version"`
+	Delete StageDeleteCmd `cmd:"" help:"Delete a stage that hasn't been committed"`
 	Diff   StageDiffCmd   `cmd:"" help:"Show changes between an upstream object or directory and the stage"`
 	Ls     StageListCmd   `cmd:"" help:"List files in the stage state"`
 	New    NewStageCmd    `cmd:"" help:"Create a new stage for preparing updates to an object"`
@@ -54,53 +58,58 @@ seconds, and mode.
 
 If a commit is interrupted, the stage file is kept. Run 'stage commit
 --resume' to finish the commit, or 'stage commit --revert' to undo the
-partial update and return the stage to its uncommitted state.`
+partial update and return the stage to its uncommitted state. 'stage delete'
+deletes a stage that hasn't been committed.`
 }
 
-// readFile reads the stage file named by the --file flag. It returns an error
-// if --root was given on the command line: commands other than 'stage new' use
-// the storage root saved in the stage.
-func (cmd *StageCmd) readFile(kctx *kong.Context) (*stage.Stage, error) {
+// ref returns the stage file named by --file. It returns an error if --root
+// was given on the command line: commands other than 'stage new' use the
+// storage root saved in the stage.
+func (cmd *StageCmd) ref(kctx *kong.Context) (stageRef, error) {
 	if flagGiven(kctx, "root") {
-		return nil, errors.New("--root can only be used with 'stage new': the storage root is read from the stage")
+		return stageRef{}, errors.New("--root can only be used with 'stage new': the storage root is read from the stage")
 	}
-	s, err := stage.Read(cmd.File)
+	return fileRef(cmd.File)
+}
+
+// load opens the stage file named by --file, and returns it with the flags
+// that name it.
+func (cmd *StageCmd) load(kctx *kong.Context) (*stage.File, stageRef, error) {
+	ref, err := cmd.ref(kctx)
 	if err != nil {
-		return nil, err
+		return nil, stageRef{}, err
+	}
+	f, err := stage.Open(ref.path)
+	if err != nil {
+		return nil, stageRef{}, err
 	}
 	if cmd.CheckStat == "minimal" {
-		s.Compare = statcache.CompareMinimal
+		f.Stage().Compare = statcache.CompareMinimal
 	}
-	return s, nil
+	return f, ref, nil
 }
 
-// readDraft reads the stage file named by the --file flag. It returns an error
-// if the stage has been finalized for a commit, which must be resumed or
-// reverted before the stage can be changed.
-func (cmd *StageCmd) readDraft(kctx *kong.Context) (*stage.Stage, error) {
-	s, err := cmd.readFile(kctx)
+// loadDraft is like load, but it returns an error if the stage is frozen for
+// a commit, which must be resumed or reverted before the stage can be
+// changed.
+func (cmd *StageCmd) loadDraft(kctx *kong.Context) (*stage.File, stageRef, error) {
+	f, ref, err := cmd.load(kctx)
 	if err != nil {
-		return nil, err
+		return nil, stageRef{}, err
 	}
-	if s.Finalized() {
-		return nil, fmt.Errorf("the stage can't be changed: a commit of %s (%s) is in progress\n  to resume: %s\n  to revert: %s",
-			s.ID(), s.NextHead(),
-			stageCommitCommand(cmd.File, false),
-			stageCommitCommand(cmd.File, true))
+	if f.Stage().Frozen() {
+		return nil, stageRef{}, fmt.Errorf("the stage can't be changed: %w", inProgressError(f.Stage(), ref))
 	}
-	return s, nil
+	return f, ref, nil
 }
 
-// stage new
+// NewStageCmd is 'ocfl stage new'.
 type NewStageCmd struct {
 	Alg string `name:"alg" default:"sha512" help:"Digest Algorithm used to digest content. Ignored for existing objects."`
 	ID  string `name:"id" short:"i" required:"" help:"object id for the new stage"`
 }
 
 func (cmd *NewStageCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd) error {
-	if _, err := os.Stat(parent.File); err == nil {
-		return fmt.Errorf("stage file already exists: %s", parent.File)
-	}
 	alg, err := digest.DefaultRegistry().Get(cmd.Alg)
 	if err != nil {
 		return err
@@ -109,18 +118,26 @@ func (cmd *NewStageCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd) 
 	if err != nil {
 		return err
 	}
+	ref, err := fileRef(parent.File)
+	if err != nil {
+		return err
+	}
+	// fail before reading the object if the stage exists
+	if err := ref.checkNew(); err != nil {
+		return err
+	}
 	s, err := newStage(ctx, root, rootLoc, cmd.ID, alg)
 	if err != nil {
 		return err
 	}
-	if err := stage.Write(parent.File, s); err != nil {
+	if _, err := ref.create(s); err != nil {
 		return err
 	}
-	env.logger.Info("stage file created", "path", parent.File, "object_id", s.ID(), "object_version", s.NextHead())
+	env.logger.Info("stage file created", "path", ref.path, "object_id", s.ID(), "object_version", s.NextHead())
 	return nil
 }
 
-// stage add
+// StageAddCmd is 'ocfl stage add'.
 type StageAddCmd struct {
 	NoHidden bool   `name:"no-hidden" help:"exclude hidden files and directories (.*). Ignored if path is a file."`
 	As       string `name:"as" help:"logical name for the new content. Default: base name if path is a file; '.' if path is a directory."`
@@ -130,10 +147,11 @@ type StageAddCmd struct {
 }
 
 func (cmd *StageAddCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
-	s, err := parent.readDraft(kctx)
+	f, _, err := parent.loadDraft(kctx)
 	if err != nil {
 		return err
 	}
+	s := f.Stage()
 	absPath, err := filepath.Abs(cmd.Path)
 	if err != nil {
 		return err
@@ -165,10 +183,10 @@ func (cmd *StageAddCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, 
 	default:
 		return errors.New("unsupported file type for: " + absPath)
 	}
-	return stage.Write(parent.File, s)
+	return f.Save()
 }
 
-// stage commit
+// StageCommitCmd is 'ocfl stage commit'.
 type StageCommitCmd struct {
 	Message string `name:"message" short:"m" help:"Message to include in the object version metadata"`
 	Name    string `name:"name" short:"n" ocflenv:"OCFL_USER_NAME" help:"Username to include in the object version metadata"`
@@ -183,117 +201,148 @@ and -e) is saved in the stage file before the object is changed. If the
 commit is interrupted or fails, the stage file is kept: run the command
 with --resume to finish the commit using the saved values, or with --revert
 to undo the partial update. -m, -n and -e can't be used with --resume or
---revert. After a revert, the stage can be changed and committed again. The
-commit is to the storage root saved in the stage.`
+--revert. After a revert, the stage can be changed and committed again, or
+deleted. The commit is to the storage root saved in the stage.`
 }
 
 func (cmd *StageCommitCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
-	s, err := parent.readFile(kctx)
+	f, ref, err := parent.load(kctx)
 	if err != nil {
 		return err
 	}
+	s := f.Stage()
 	root, err := env.openRoot(ctx, s.Root())
 	if err != nil {
 		return err
 	}
 	switch {
 	case cmd.Revert:
-		return cmd.revert(ctx, env, root, s, parent.File, kctx)
+		return cmd.revert(ctx, env, root, f, ref, kctx)
 	case cmd.Resume:
-		return cmd.resume(ctx, env, root, s, parent.File, kctx)
-	case s.Finalized():
-		return fmt.Errorf("a commit of %s (%s) is in progress\n  to resume: %s\n  to revert: %s",
-			s.ID(), s.NextHead(),
-			stageCommitCommand(parent.File, false),
-			stageCommitCommand(parent.File, true))
+		return cmd.resume(ctx, env, root, f, ref, kctx)
+	case s.Frozen():
+		return inProgressError(s, ref)
 	}
-	user := newUser(cmd.Name, cmd.Email)
-	// staged files are checked before the stage is finalized, so it can
-	// still be changed if they aren't available.
-	content, err := stagedContent(ctx, env, s)
-	if err != nil {
-		return fmt.Errorf("the stage can't be committed: %w\n  add the files again or remove them from the stage", err)
-	}
-	if err := s.Finalize(cmd.Message, user); err != nil {
+	if err := checkWritable(root); err != nil {
 		return err
 	}
-	// The finalized stage is saved before the object is changed: it's all
-	// that's needed to resume or revert the commit.
-	if err := stage.Write(parent.File, s); err != nil {
-		return fmt.Errorf("saving the stage file before commit: %w", err)
+	err = f.Commit(ctx, root, cmd.Message, newUser(cmd.Name, cmd.Email), env.logger)
+	var notSaved *stage.DraftNotSavedError
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &notSaved):
+		return draftNotSavedError(s, ref, notSaved)
+	case s.Frozen():
+		return commitError(root, s, ref, err)
+	case errors.Is(err, ocfl.ErrUpdateConflict):
+		return conflictError(s, err, "  the stage can't be committed: delete it and create a new one",
+			"  to delete it: "+ref.command("delete"))
+	case errors.Is(err, ocfl.ErrMissingContent):
+		return fmt.Errorf("the stage can't be committed: %w\n  add the files again or remove them from the stage", err)
 	}
-	return applyStage(ctx, env, root, s, parent.File, false, content)
+	return err
 }
 
-// checkNoVersionFlags returns an error if -m, -n or -e were given on the
-// command line. mode is the flag (--resume or --revert) that can't be used
-// with them.
-func checkNoVersionFlags(kctx *kong.Context, mode string) error {
-	// -n and -e may be set from the environment: only flags on the command
-	// line are an error.
-	for _, flag := range []string{"message", "name", "email"} {
-		if flagGiven(kctx, flag) {
-			return fmt.Errorf("%s can't be used with --message (-m), --name (-n) or --email (-e)", mode)
-		}
-	}
-	return nil
-}
-
-// resume finishes the interrupted commit of the finalized stage s, which is
-// saved in the stage file stagePath, using the saved version metadata.
-func (cmd *StageCommitCmd) resume(ctx context.Context, env *cmdEnv, root *ocfl.Root, s *stage.Stage, stagePath string, kctx *kong.Context) error {
+// resume finishes the interrupted commit of the frozen stage in f, which ref
+// names, using the saved version metadata.
+func (cmd *StageCommitCmd) resume(ctx context.Context, env *cmdEnv, root *ocfl.Root, f *stage.File, ref stageRef, kctx *kong.Context) error {
 	if err := checkNoVersionFlags(kctx, "--resume"); err != nil {
 		return err
 	}
-	if !s.Finalized() {
-		return errors.New("stage isn't finalized: nothing to resume")
+	err := f.Resume(ctx, root, env.logger)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, stage.ErrNotFrozen):
+		return fmt.Errorf("%w: nothing to resume", err)
 	}
-	content, err := stagedContent(ctx, env, s)
-	if err != nil {
-		return env.commitError(root, s, stagePath, true, err)
-	}
-	return applyStage(ctx, env, root, s, stagePath, true, content)
+	return commitError(root, f.Stage(), ref, err)
 }
 
-// revert reverts the interrupted commit of the finalized stage s, which is
-// saved in the stage file stagePath, and saves the stage as a draft.
-func (cmd *StageCommitCmd) revert(ctx context.Context, env *cmdEnv, root *ocfl.Root, s *stage.Stage, stagePath string, kctx *kong.Context) error {
+// revert reverts the interrupted commit of the frozen stage in f, which ref
+// names, and saves the stage as a draft.
+func (cmd *StageCommitCmd) revert(ctx context.Context, env *cmdEnv, root *ocfl.Root, f *stage.File, ref stageRef, kctx *kong.Context) error {
 	if err := checkNoVersionFlags(kctx, "--revert"); err != nil {
 		return err
 	}
-	if !s.Finalized() {
-		return errors.New("stage isn't finalized: nothing to revert")
-	}
-	env.logger.Info("reverting object update", "object_id", s.ID(), "object_version", s.NextHead())
-	err := root.Revert(ctx, s.Update(), ocfl.ApplyWithLogger(env.logger))
+	s := f.Stage()
+	err := f.Revert(ctx, root, env.logger)
 	switch {
+	case errors.Is(err, stage.ErrNotFrozen):
+		return fmt.Errorf("%w: nothing to revert", err)
+	case err != nil && !s.Frozen():
+		// the commit was reverted, but the stage file still has the frozen
+		// stage: resuming it would apply the commit again
+		return fmt.Errorf("revert of %s (%s): %w\n  the stage file still has the commit: don't resume it\n  to finish reverting: %s",
+			s.ID(), s.NextHead(), err, ref.command("commit", "--revert"))
 	case errors.Is(err, ocfl.ErrUpdateCompleted):
 		return fmt.Errorf("the commit of %s (%s) is complete and can't be reverted; to finish the commit and remove the stage file, run:\n  %s",
-			s.ID(), s.NextHead(), stageCommitCommand(stagePath, false))
+			s.ID(), s.NextHead(), ref.command("commit", "--resume"))
 	case errors.Is(err, context.Canceled):
 		return fmt.Errorf("revert of %s (%s) was interrupted\n  to finish reverting: %s",
-			s.ID(), s.NextHead(), stageCommitCommand(stagePath, true))
+			s.ID(), s.NextHead(), ref.command("commit", "--revert"))
+	case errors.Is(err, ocfl.ErrUpdateConflict):
+		return fmt.Errorf("the commit of %s (%s) can't be reverted: %w\n  object path: %s\n  check the object with 'ocfl validate', then delete the stage: %s",
+			s.ID(), s.NextHead(), err, objectLocation(root, s.ID()), ref.command("delete", "--force"))
 	case err != nil:
 		return fmt.Errorf("reverting the commit of %s (%s): %w", s.ID(), s.NextHead(), err)
 	}
-	// s is a draft again
-	if err := stage.Write(stagePath, s); err != nil {
-		return fmt.Errorf("the commit was reverted, but the stage file couldn't be saved: %w", err)
-	}
-	env.logger.Info("object update reverted: the stage can be changed and committed again", "path", stagePath)
+	env.logger.Info("object update reverted: the stage can be changed and committed again, or deleted",
+		"path", ref.path, "delete", ref.command("delete"))
 	return nil
 }
 
-// stage diff
+// StageDeleteCmd is 'ocfl stage delete'.
+type StageDeleteCmd struct {
+	Force bool `name:"force" help:"Delete the stage even if a commit is in progress. The commit can't be resumed or reverted afterwards."`
+}
+
+func (cmd *StageDeleteCmd) Help() string {
+	return `Deletes a stage that hasn't been committed. A stage with a commit in
+progress can't be deleted: resume or revert the commit first. If neither is
+possible (for example, because the object was changed by something else),
+use --force. The object may be left partially updated: check it with 'ocfl
+validate'.`
+}
+
+func (cmd *StageDeleteCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
+	f, ref, err := parent.load(kctx)
+	if err != nil {
+		return err
+	}
+	s := f.Stage()
+	if cmd.Force {
+		err = f.Discard()
+	} else {
+		err = f.Delete()
+	}
+	switch {
+	case errors.Is(err, stage.ErrFrozen):
+		return fmt.Errorf("the stage can't be deleted: %w", inProgressError(s, ref))
+	case err != nil:
+		return err
+	}
+	if s.Frozen() {
+		env.logger.Warn("deleted a stage with a commit in progress: the object may be partially updated",
+			"object_id", s.ID(), "object_version", s.NextHead(), "storage_root", s.Root())
+		return nil
+	}
+	env.logger.Info("stage deleted", "object_id", s.ID(), "path", ref.path)
+	return nil
+}
+
+// StageDiffCmd is 'ocfl stage diff'.
 type StageDiffCmd struct {
 	Dir string `name:"dir" help:"use a local directory rather than upstream object as basis for comparison to the stage."`
 }
 
 func (cmd *StageDiffCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
-	s, err := parent.readFile(kctx)
+	f, _, err := parent.load(kctx)
 	if err != nil {
 		return err
 	}
+	s := f.Stage()
 	baseState := s.Update().BaseState().PathMap()
 	if cmd.Dir != "" {
 		baseState = ocfl.PathMap{}
@@ -320,38 +369,38 @@ func (cmd *StageDiffCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd,
 	return nil
 }
 
-// 'stage list' command
+// StageListCmd is 'ocfl stage ls'.
 type StageListCmd struct {
 	WithDigests bool `name:"digests" short:"d" help:"include file digests in output"`
 }
 
-func (cmd *StageListCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
-	s, err := parent.readFile(kctx)
+func (cmd *StageListCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
+	f, _, err := parent.load(kctx)
 	if err != nil {
 		return err
 	}
-	s.List(env.stdout, cmd.WithDigests)
+	f.Stage().List(env.stdout, cmd.WithDigests)
 	return nil
 }
 
-// 'stage rm' command
+// StageRmCmd is 'ocfl stage rm'.
 type StageRmCmd struct {
 	Recursive bool   `name:"recursive" short:"r" help:"remove all files in the directory"`
 	Path      string `arg:"" name:"path" help:"file or directory to remove"`
 }
 
-func (cmd *StageRmCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
-	s, err := parent.readDraft(kctx)
+func (cmd *StageRmCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
+	f, _, err := parent.loadDraft(kctx)
 	if err != nil {
 		return err
 	}
-	if err := s.Remove(cmd.Path, cmd.Recursive, env.logger); err != nil {
+	if err := f.Stage().Remove(cmd.Path, cmd.Recursive, env.logger); err != nil {
 		return err
 	}
-	return stage.Write(parent.File, s)
+	return f.Save()
 }
 
-// 'stage status' command
+// StageStatusCmd is 'ocfl stage status'.
 type StageStatusCmd struct{}
 
 func (cmd *StageStatusCmd) Help() string {
@@ -364,10 +413,11 @@ error.`
 }
 
 func (cmd *StageStatusCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, kctx *kong.Context) error {
-	s, err := parent.readFile(kctx)
+	f, ref, err := parent.load(kctx)
 	if err != nil {
 		return err
 	}
+	s := f.Stage()
 	upd := s.Update()
 	fmt.Fprintf(env.stdout, "storage root: %s\n", s.Root())
 	fmt.Fprintf(env.stdout, "object:       %s (%s)\n", s.ID(), s.NextHead())
@@ -378,36 +428,114 @@ func (cmd *StageStatusCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCm
 		return err
 	}
 	switch {
-	case s.Finalized():
+	case s.Frozen():
 		fmt.Fprintf(env.stdout, "commit in progress: %s\n", s.NextHead())
-		fmt.Fprintf(env.stdout, "  to resume: %s\n", stageCommitCommand(parent.File, false))
-		fmt.Fprintf(env.stdout, "  to revert: %s\n", stageCommitCommand(parent.File, true))
+		fmt.Fprintf(env.stdout, "  to resume: %s\n", ref.command("commit", "--resume"))
+		fmt.Fprintf(env.stdout, "  to revert: %s\n", ref.command("commit", "--revert"))
 	case !stateDiff.Empty():
 		fmt.Fprintln(env.stdout, "stage has changes to commit")
 	default:
 		fmt.Fprintln(env.stdout, "stage is unchanged and/or empty")
 	}
-	return checkStagedFiles(ctx, env, s, parent.File)
+	return checkStagedFiles(ctx, env, f)
 }
 
-// checkStagedFiles reports staged files in s that have changed since they were
-// added, and saves the refreshed stats of unchanged files in the stage file
-// stagePath. It returns an error if the commit needs content that is only in
-// changed files.
-func checkStagedFiles(ctx context.Context, env *cmdEnv, s *stage.Stage, stagePath string) error {
-	result, err := s.Check(ctx)
+// existingStageError returns the error for creating a stage when the stage
+// file ref already exists.
+func existingStageError(ref stageRef) error {
+	f, err := stage.Open(ref.path)
+	if err != nil {
+		return fmt.Errorf("stage file already exists, but it can't be read: %w\n  to start over, remove the stage file: %s", err, ref.path)
+	}
+	s := f.Stage()
+	if s.Frozen() {
+		return fmt.Errorf("a stage for %s already exists: %w", s.ID(), inProgressError(s, ref))
+	}
+	return fmt.Errorf("a stage for %s already exists: %s\n  to see it: %s\n  to delete it: %s",
+		s.ID(), ref.path, ref.command("status"), ref.command("delete"))
+}
+
+// stageRef is a stage file and the flags that name it in 'ocfl stage'
+// commands.
+type stageRef struct {
+	path  string
+	flags []string
+}
+
+// command returns the command line for the 'ocfl stage' subcommand sub, using
+// r's stage file, with args.
+func (r stageRef) command(sub string, args ...string) string {
+	cmd := append([]string{"ocfl", "stage", sub}, r.flags...)
+	cmd = append(cmd, args...)
+	for i, arg := range cmd {
+		cmd[i] = shellQuote(arg)
+	}
+	return strings.Join(cmd, " ")
+}
+
+// checkNew returns an error if r's stage file exists, so creating a stage can
+// fail before doing any work.
+func (r stageRef) checkNew() error {
+	if _, err := os.Lstat(r.path); err == nil {
+		return existingStageError(r)
+	}
+	return nil
+}
+
+// create saves s in r's stage file, which must not exist: if it does, the
+// error says how to see or delete the existing stage.
+func (r stageRef) create(s *stage.Stage) (*stage.File, error) {
+	f, err := stage.Create(r.path, s)
+	if errors.Is(err, fs.ErrExist) {
+		return nil, existingStageError(r)
+	}
+	return f, err
+}
+
+// fileRef returns the stage file name, which is named with -f and its absolute
+// path in commands.
+func fileRef(name string) (stageRef, error) {
+	abs, err := filepath.Abs(name)
+	if err != nil {
+		return stageRef{}, err
+	}
+	return stageRef{path: abs, flags: []string{"-f", abs}}, nil
+}
+
+// inProgressError returns an error saying that the commit of the frozen
+// stage s, saved in the stage file ref, is in progress, and how to resume or
+// revert it.
+func inProgressError(s *stage.Stage, ref stageRef) error {
+	return fmt.Errorf("a commit of %s (%s) is in progress\n  to resume: %s\n  to revert: %s",
+		s.ID(), s.NextHead(), ref.command("commit", "--resume"), ref.command("commit", "--revert"))
+}
+
+// checkNoVersionFlags returns an error if -m, -n or -e were given on the
+// command line. mode is the flag (--resume or --revert) that can't be used
+// with them.
+func checkNoVersionFlags(kctx *kong.Context, mode string) error {
+	// -n and -e may be set from the environment: only flags on the command
+	// line are an error.
+	for _, flag := range []string{"message", "name", "email"} {
+		if flagGiven(kctx, flag) {
+			return fmt.Errorf("%s can't be used with --message (-m), --name (-n) or --email (-e)", mode)
+		}
+	}
+	return nil
+}
+
+// checkStagedFiles reports staged files in the stage in f that have changed
+// since they were added. It returns an error if the commit needs content that
+// is only in changed files.
+func checkStagedFiles(ctx context.Context, env *cmdEnv, f *stage.File) error {
+	s := f.Stage()
+	result, err := f.Check(ctx, env.logger)
 	if err != nil {
 		return err
 	}
-	if result.Refreshed {
-		// like 'git status', saving the refreshed stats is opportunistic
-		if err := stage.Write(stagePath, s); err != nil {
-			env.logger.Warn("couldn't save refreshed file stats in the stage file", "err", err)
-		}
-	}
 	if len(result.Changed) > 0 {
 		fmt.Fprintln(env.stdout, "staged files changed since they were added:")
-		if !s.Finalized() {
+		if !s.Frozen() {
 			fmt.Fprintln(env.stdout, `  (use "ocfl stage add" to stage the new content)`)
 		}
 		for _, c := range result.Changed {
@@ -420,10 +548,19 @@ func checkStagedFiles(ctx context.Context, env *cmdEnv, s *stage.Stage, stagePat
 	}
 	if len(result.Unavailable) > 0 {
 		todo := "add the files again or remove them from the stage"
-		if s.Finalized() {
+		if s.Frozen() {
 			todo = "restore the files to resume the commit, or revert it"
 		}
 		return fmt.Errorf("the stage can't be committed: %w\n  %s", &stage.UnavailableError{Paths: result.Unavailable}, todo)
+	}
+	return nil
+}
+
+// checkWritable returns an error if root's storage can't be written, so a
+// commit fails before its stage is frozen.
+func checkWritable(root *ocfl.Root) error {
+	if _, ok := root.FS().(ocflfs.WriteFS); !ok {
+		return fmt.Errorf("storage root %s is read-only", locationString(root.FS(), root.Path()))
 	}
 	return nil
 }
@@ -445,66 +582,35 @@ func newStage(ctx context.Context, root *ocfl.Root, rootLoc string, id string, a
 	return s, err
 }
 
-// stagedContent returns the content source for committing s: its unchanged
-// staged files.
-func stagedContent(ctx context.Context, env *cmdEnv, s *stage.Stage) (ocfl.ContentSource, error) {
-	return s.Content(ctx, func(dir string) (ocflfs.FS, error) {
-		fsys, err := env.localFS(dir)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %w", errStagedContent, err)
-		}
-		return fsys, nil
-	})
-}
-
-// applyStage applies the finalized update in s, which is saved in the stage
-// file stagePath, with content from staged files, and removes the stage
-// file. resuming is true if an earlier attempt to apply s may have changed the
-// object. If the update isn't applied, the stage file is kept and the error
-// says how to resume or revert the commit.
-func applyStage(ctx context.Context, env *cmdEnv, root *ocfl.Root, s *stage.Stage, stagePath string, resuming bool, content ocfl.ContentSource) error {
-	env.logger.Info("starting object update", "object_id", s.ID(), "object_version", s.NextHead())
-	if _, err := root.Apply(ctx, s.Update(), content, ocfl.ApplyWithLogger(env.logger)); err != nil {
-		return env.commitError(root, s, stagePath, resuming, err)
-	}
-	env.logger.Info("object update complete", "object_id", s.ID(), "object_version", s.NextHead())
-	if err := os.Remove(stagePath); err != nil {
-		return fmt.Errorf("removing stage file: %w", err)
-	}
-	return nil
-}
-
-// errStagedContent wraps errors opening the directories staged files were
-// added from.
-var errStagedContent = errors.New("staged content isn't available")
-
-// commitError describes the error err from applying the stage s, saved in the
-// stage file stagePath, and says what to do next. resuming is true if an
-// earlier attempt to apply s may have changed the object.
-func (env *cmdEnv) commitError(root *ocfl.Root, s *stage.Stage, stagePath string, resuming bool, err error) error {
+// commitError describes the error err from committing the stage s, or
+// resuming its commit, when s is frozen afterwards: the commit is in progress,
+// and the error says how to resume or revert it. ref names s's stage file in
+// commands.
+func commitError(root *ocfl.Root, s *stage.Stage, ref stageRef, err error) error {
 	commit := fmt.Sprintf("commit of %s (%s)", s.ID(), s.NextHead())
 	objPath := "  object path: " + objectLocation(root, s.ID())
-	resume := stageCommitCommand(stagePath, false)
-	revert := "  to revert: " + stageCommitCommand(stagePath, true)
+	resume := ref.command("commit", "--resume")
+	revert := "  to revert: " + ref.command("commit", "--revert")
 	var lines []string
 	switch {
+	case errors.Is(err, stage.ErrNotRemoved):
+		lines = []string{commit + ": " + err.Error(), "  to remove it: " + resume}
 	case errors.Is(err, context.Canceled):
 		lines = []string{commit + " was interrupted; the object may be partially updated",
 			objPath, "  to resume: " + resume, revert}
 	case errors.Is(err, ocfl.ErrUpdateConflict):
-		lines = []string{commit + " failed: " + err.Error(),
-			objPath, "  the stage file was kept: " + stagePath}
-	case errors.Is(err, ocfl.ErrContentChanged),
-		resuming && (errors.Is(err, ocfl.ErrMissingContent) || errors.Is(err, errStagedContent)):
+		// the commit was resumed, and the object was changed by something
+		// else after it was interrupted: the stage can't be resumed or
+		// reverted. Conflicts committing a draft stage are described by
+		// conflictError.
+		lines = []string{commit + " can't be resumed or reverted: " + err.Error(),
+			objPath, "  check the object with 'ocfl validate', then delete the stage: " + ref.command("delete", "--force")}
+	case errors.Is(err, ocfl.ErrContentChanged), errors.Is(err, ocfl.ErrMissingContent):
 		// Apply finds changed content as it copies it, after other content
 		// may have been written, and a resumed commit may have been
 		// interrupted after changing the object.
 		lines = []string{commit + " failed; the object may be partially updated: " + err.Error(),
 			objPath, "  to resume after restoring the staged files: " + resume, revert}
-	case errors.Is(err, ocfl.ErrMissingContent), errors.Is(err, errStagedContent):
-		// Apply checks for missing content before it writes anything.
-		lines = []string{commit + " failed before the object was changed: " + err.Error(),
-			"  to resume after restoring the staged files: " + resume, revert}
 	default:
 		lines = []string{commit + " failed; the object may be partially updated: " + err.Error(),
 			objPath, "  to resume: " + resume, revert}
@@ -512,19 +618,22 @@ func (env *cmdEnv) commitError(root *ocfl.Root, s *stage.Stage, stagePath string
 	return &wrappedError{msg: strings.Join(lines, "\n"), err: err}
 }
 
-// stageCommitCommand returns the 'stage commit' command line that resumes, or
-// if revert is true reverts, a commit using the stage file stagePath.
-func stageCommitCommand(stagePath string, revert bool) string {
-	args := []string{"ocfl", "stage", "commit", "-f", stagePath}
-	if revert {
-		args = append(args, "--revert")
-	} else {
-		args = append(args, "--resume")
-	}
-	for i, arg := range args {
-		args[i] = shellQuote(arg)
-	}
-	return strings.Join(args, " ")
+// conflictError describes the error err from committing the stage s, which
+// failed before the object was changed because the object has changed since
+// the stage was created. then is what to do next.
+func conflictError(s *stage.Stage, err error, then ...string) error {
+	lines := []string{fmt.Sprintf("commit of %s (%s) failed before the object was changed: %v", s.ID(), s.NextHead(), err)}
+	lines = append(lines, then...)
+	return &wrappedError{msg: strings.Join(lines, "\n"), err: err}
+}
+
+// draftNotSavedError describes the error err from committing the stage s,
+// which failed before the object was changed because the object has changed
+// since the stage was created, but couldn't be saved as a draft again. ref
+// names s's stage file, which still has the frozen stage.
+func draftNotSavedError(s *stage.Stage, ref stageRef, err *stage.DraftNotSavedError) error {
+	return conflictError(s, err.Err, "  the stage file couldn't be restored: "+err.SaveErr.Error(),
+		"  to delete it: "+ref.command("delete", "--force"))
 }
 
 // objectLocation returns the storage location of the object id in root, for
@@ -536,34 +645,3 @@ func objectLocation(root *ocfl.Root, id string) string {
 	}
 	return locationString(root.FS(), path.Join(root.Path(), objPath))
 }
-
-// flagGiven returns true if the flag name was given on the command line, as
-// opposed to set from the environment or a default.
-func flagGiven(kctx *kong.Context, name string) bool {
-	for _, p := range kctx.Path {
-		if p.Flag != nil && !p.Resolved && p.Flag.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-// shellQuote quotes s for a POSIX shell if it has characters that need it.
-func shellQuote(s string) string {
-	safe := func(r rune) bool {
-		return r < 128 && (r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./:=@%+,", r))
-	}
-	if s != "" && strings.IndexFunc(s, func(r rune) bool { return !safe(r) }) < 0 {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-// wrappedError is an error with a message that replaces err's.
-type wrappedError struct {
-	msg string
-	err error
-}
-
-func (e *wrappedError) Error() string { return e.msg }
-func (e *wrappedError) Unwrap() error { return e.err }
