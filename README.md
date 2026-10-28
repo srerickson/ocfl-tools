@@ -291,8 +291,11 @@ Commands that change a stage (`ocfl stage add`, `rm`, `commit`, `delete`, and
 `ocfl commit`) lock its stage file while they run, so only one of them can
 change it at a time. The lock is a file next to the stage file, with `.lock`
 appended to its name, that records the process holding it (its pid, host, and
-start time). `ocfl stage status`, `ls`, and `diff` don't need the lock, so they
-work while another command is changing the stage.
+start time). `ocfl stage status`, `ls`, and `diff` don't wait for the lock, so
+they work while another command is changing the stage. `ocfl stage status`
+saves refreshed file stats only if it can take the lock right away, holding it
+briefly; otherwise, it skips saving them. It warns when the stage is locked,
+naming the process holding the lock and how to clear it.
 
 If a command is killed (for example, with `kill -9` or a crash), its lock file
 is left behind, and commands that change the stage fail with an error saying
