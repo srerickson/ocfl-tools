@@ -544,6 +544,357 @@ func TestStage_Content(t *testing.T) {
 	})
 }
 
+func TestStage_CheckUpstream(t *testing.T) {
+	ctx := context.Background()
+	for _, fx := range upstreamFixtures {
+		t.Run(fx.desc, func(t *testing.T) {
+			root, f := fx.build(t)
+			up, err := f.Stage().CheckUpstream(ctx, root)
+			be.NilErr(t, err)
+			be.Equal(t, fx.want, up)
+		})
+	}
+
+	t.Run("malformed sidecar", func(t *testing.T) {
+		_, root := newRoots(t)
+		f := draftFile(t, root, existingID)
+		writeObjectFile(t, root, existingID, "inventory.json.sha512", "not a digest")
+		_, err := f.Stage().CheckUpstream(ctx, root)
+		be.True(t, errors.Is(err, ocfl.ErrInventorySidecarContents))
+	})
+
+	t.Run("canceled context", func(t *testing.T) {
+		_, root := newRoots(t)
+		f := draftFile(t, root, existingID)
+		ctx, cancel := context.WithCancel(ctx)
+		cancel()
+		_, err := f.Stage().CheckUpstream(ctx, root)
+		be.True(t, errors.Is(err, context.Canceled))
+	})
+
+	t.Run("nil root", func(t *testing.T) {
+		_, root := newRoots(t)
+		f := draftFile(t, root, existingID)
+		defer func() { be.Nonzero(t, recover()) }()
+		f.Stage().CheckUpstream(ctx, nil)
+	})
+}
+
+// TestStage_CheckUpstreamMatchesCommit checks that CheckUpstream agrees with
+// the operations that decide whether the object has changed since the stage
+// was created: File.Commit for a draft stage, and File.Resume and File.Revert
+// for a frozen one. The documented differences are checked to still be
+// there.
+func TestStage_CheckUpstreamMatchesCommit(t *testing.T) {
+	ctx := context.Background()
+	for _, fx := range upstreamFixtures {
+		t.Run(fx.desc, func(t *testing.T) {
+			root, f := fx.build(t)
+			up, err := f.Stage().CheckUpstream(ctx, root)
+			be.NilErr(t, err)
+			var got stage.UpstreamState // the state that ocfl-go decides
+			if !f.Stage().Frozen() {
+				root, f := fx.build(t)
+				err := f.Commit(ctx, root, "message", ocfl.User{Name: "name"}, nil)
+				got = stage.UpstreamAtBase
+				if errors.Is(err, ocfl.ErrUpdateConflict) {
+					got = stage.UpstreamChanged
+				}
+			} else {
+				root, f := fx.build(t)
+				revertErr := f.Revert(ctx, root, nil)
+				switch {
+				case revertErr == nil:
+					got = stage.UpstreamAtBase
+				case errors.Is(revertErr, ocfl.ErrUpdateCompleted):
+					got = stage.UpstreamCommitted
+				case errors.Is(revertErr, ocfl.ErrUpdateConflict):
+					got = stage.UpstreamChanged
+				default:
+					t.Fatalf("unexpected revert error: %v", revertErr)
+				}
+				root, f = fx.build(t)
+				resumeErr := f.Resume(ctx, root, nil)
+				be.Equal(t, got == stage.UpstreamChanged, errors.Is(resumeErr, ocfl.ErrUpdateConflict))
+				if got == stage.UpstreamCommitted {
+					be.NilErr(t, resumeErr)
+				}
+			}
+			if fx.exception != "" {
+				t.Log("documented difference:", fx.exception)
+				be.Unequal(t, got, up.State)
+				return
+			}
+			be.Equal(t, got, up.State)
+		})
+	}
+}
+
+// object IDs used in upstream fixtures: the first is in the roots returned by
+// newRoots, and the second isn't.
+const (
+	existingID = "ark:123/abc"
+	newID      = "ark:xyz/987"
+)
+
+// upstreamFixture is a storage root and a stage file for one of its objects,
+// in a state that CheckUpstream reports as want.
+type upstreamFixture struct {
+	desc  string
+	build func(t *testing.T) (*ocfl.Root, *stage.File)
+	want  stage.Upstream
+	// exception describes a documented difference between CheckUpstream and
+	// committing the stage. If it's set, they must disagree.
+	exception string
+}
+
+var upstreamFixtures = []upstreamFixture{
+	{
+		desc: "draft, unchanged",
+		build: func(t *testing.T) (*ocfl.Root, *stage.File) {
+			_, root := newRoots(t)
+			return root, draftFile(t, root, existingID)
+		},
+		want: stage.Upstream{State: stage.UpstreamAtBase, Exists: true},
+	},
+	{
+		desc: "draft, version committed by another stage",
+		build: func(t *testing.T) (*ocfl.Root, *stage.File) {
+			_, root := newRoots(t)
+			f := draftFile(t, root, existingID)
+			commitOther(t, root, existingID)
+			return root, f
+		},
+		want: stage.Upstream{State: stage.UpstreamChanged, Exists: true, Head: ocfl.V(2)},
+	},
+	{
+		desc: "draft, object deleted",
+		build: func(t *testing.T) (*ocfl.Root, *stage.File) {
+			_, root := newRoots(t)
+			f := draftFile(t, root, existingID)
+			be.NilErr(t, os.RemoveAll(objectDir(t, root, existingID)))
+			return root, f
+		},
+		want: stage.Upstream{State: stage.UpstreamChanged},
+	},
+	{
+		desc: "draft, commit by another stage interrupted before the root sidecar",
+		build: func(t *testing.T) (*ocfl.Root, *stage.File) {
+			_, root := newRoots(t)
+			f := draftFile(t, root, existingID)
+			other := draftFile(t, root, existingID)
+			interruptCommit(t, root, other)
+			return root, f
+		},
+		want: stage.Upstream{State: stage.UpstreamAtBase, Exists: true},
+	},
+	{
+		desc: "draft for a new object, no object",
+		build: func(t *testing.T) (*ocfl.Root, *stage.File) {
+			_, root := newRoots(t)
+			return root, draftFile(t, root, newID)
+		},
+		want: stage.Upstream{State: stage.UpstreamAtBase},
+	},
+	{
+		desc: "draft for a new object, object created by another stage",
+		build: func(t *testing.T) (*ocfl.Root, *stage.File) {
+			_, root := newRoots(t)
+			f := draftFile(t, root, newID)
+			commitOther(t, root, newID)
+			return root, f
+		},
+		want: stage.Upstream{State: stage.UpstreamChanged, Exists: true, Head: ocfl.V(1)},
+	},
+	{
+		desc: "draft for a new object, stray file",
+		build: func(t *testing.T) (*ocfl.Root, *stage.File) {
+			_, root := newRoots(t)
+			f := draftFile(t, root, newID)
+			writeObjectFile(t, root, newID, "stray.txt", "stray")
+			return root, f
+		},
+		want: stage.Upstream{State: stage.UpstreamChanged, Exists: true},
+	},
+	{
+		desc: "draft for a new object, files the update writes",
+		build: func(t *testing.T) (*ocfl.Root, *stage.File) {
+			_, root := newRoots(t)
+			f := draftFile(t, root, newID)
+			decl := ocfl.Namaste{Type: ocfl.NamasteTypeObject, Version: root.Spec()}
+			writeObjectFile(t, root, newID, decl.Name(), decl.Body())
+			be.NilErr(t, os.Mkdir(filepath.Join(objectDir(t, root, newID), "v1"), 0o755))
+			return root, f
+		},
+		want:      stage.Upstream{State: stage.UpstreamChanged, Exists: true},
+		exception: "a draft for a new object reports any content in the object directory; commit accepts files it would write",
+	},
+	{
+		desc: "frozen, interrupted before writing",
+		build: func(t *testing.T) (*ocfl.Root, *stage.File) {
+			readOnly, root := newRoots(t)
+			return root, frozenFile(t, readOnly, root, existingID)
+		},
+		want: stage.Upstream{State: stage.UpstreamAtBase, Exists: true},
+	},
+	{
+		desc: "frozen, interrupted before the root sidecar",
+		build: func(t *testing.T) (*ocfl.Root, *stage.File) {
+			_, root := newRoots(t)
+			f := draftFile(t, root, existingID)
+			return root, interruptCommit(t, root, f)
+		},
+		want: stage.Upstream{State: stage.UpstreamAtBase, Exists: true},
+	},
+	{
+		desc: "frozen for a new object, interrupted before writing",
+		build: func(t *testing.T) (*ocfl.Root, *stage.File) {
+			readOnly, root := newRoots(t)
+			return root, frozenFile(t, readOnly, root, newID)
+		},
+		want: stage.Upstream{State: stage.UpstreamAtBase},
+	},
+	{
+		desc: "frozen for a new object, interrupted before the root sidecar",
+		build: func(t *testing.T) (*ocfl.Root, *stage.File) {
+			_, root := newRoots(t)
+			f := draftFile(t, root, newID)
+			return root, interruptCommit(t, root, f)
+		},
+		want: stage.Upstream{State: stage.UpstreamAtBase, Exists: true},
+	},
+	{
+		desc: "frozen, commit complete",
+		build: func(t *testing.T) (*ocfl.Root, *stage.File) {
+			readOnly, root := newRoots(t)
+			f := frozenFile(t, readOnly, root, existingID)
+			saved, err := os.ReadFile(f.Path())
+			be.NilErr(t, err)
+			be.NilErr(t, f.Resume(context.Background(), root, nil))
+			// the stage file is left behind
+			be.NilErr(t, os.WriteFile(f.Path(), saved, 0o644))
+			return root, openFile(t, f.Path())
+		},
+		want: stage.Upstream{State: stage.UpstreamCommitted, Exists: true, Head: ocfl.V(2)},
+	},
+	{
+		desc: "frozen, version committed by another stage",
+		build: func(t *testing.T) (*ocfl.Root, *stage.File) {
+			readOnly, root := newRoots(t)
+			f := frozenFile(t, readOnly, root, existingID)
+			commitOther(t, root, existingID)
+			return root, f
+		},
+		want: stage.Upstream{State: stage.UpstreamChanged, Exists: true, Head: ocfl.V(2)},
+	},
+	{
+		desc: "frozen for a new object, stray file",
+		build: func(t *testing.T) (*ocfl.Root, *stage.File) {
+			readOnly, root := newRoots(t)
+			f := frozenFile(t, readOnly, root, newID)
+			writeObjectFile(t, root, newID, "stray.txt", "stray")
+			return root, f
+		},
+		want:      stage.Upstream{State: stage.UpstreamAtBase, Exists: true},
+		exception: "a frozen stage for a new object with no sidecar is at base; commit rejects files it doesn't write",
+	},
+}
+
+// draftFile returns a saved draft stage file for the object id in root, with
+// a new staged file.
+func draftFile(t *testing.T, root *ocfl.Root, id string) *stage.File {
+	t.Helper()
+	f := newFile(t, root, id)
+	be.NilErr(t, f.Stage().AddDir(context.Background(), writeFiles(t, map[string]string{"a.txt": "a"}), nil))
+	be.NilErr(t, f.Save())
+	return f
+}
+
+// frozenFile returns a stage file for the object id in root whose commit
+// failed before anything was written, using readOnly, a read-only root for
+// the same storage root.
+func frozenFile(t *testing.T, readOnly, root *ocfl.Root, id string) *stage.File {
+	t.Helper()
+	f := draftFile(t, root, id)
+	be.Nonzero(t, f.Commit(context.Background(), readOnly, "message", ocfl.User{Name: "name"}, nil))
+	return openFile(t, f.Path())
+}
+
+// interruptCommit commits the draft stage file f to root, interrupting it
+// after the root inventory.json is written, before its sidecar, and returns
+// the stage file with the frozen stage.
+func interruptCommit(t *testing.T, root *ocfl.Root, f *stage.File) *stage.File {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// steps are logged before they run, and aren't run once ctx is canceled
+	logger := slog.New(&cancelHandler{msg: "write inventory.json.sha512", cancel: cancel})
+	head := f.Stage().NextHead()
+	err := f.Commit(ctx, root, "message", ocfl.User{Name: "name"}, logger)
+	be.True(t, errors.Is(err, context.Canceled))
+	dir := objectDir(t, root, f.Stage().ID())
+	rootInv, err := os.ReadFile(filepath.Join(dir, "inventory.json"))
+	be.NilErr(t, err)
+	verInv, err := os.ReadFile(filepath.Join(dir, head.String(), "inventory.json"))
+	be.NilErr(t, err)
+	be.Equal(t, string(verInv), string(rootInv))
+	return openFile(t, f.Path())
+}
+
+// commitOther commits a new version of the object id in root with another
+// stage.
+func commitOther(t *testing.T, root *ocfl.Root, id string) {
+	t.Helper()
+	other := newFile(t, root, id)
+	be.NilErr(t, other.Stage().AddDir(context.Background(), writeFiles(t, map[string]string{"other.txt": "other"}), nil))
+	be.NilErr(t, other.Commit(context.Background(), root, "other", ocfl.User{Name: "other"}, nil))
+}
+
+// openFile opens the stage file name.
+func openFile(t *testing.T, name string) *stage.File {
+	t.Helper()
+	f, err := stage.Open(name)
+	be.NilErr(t, err)
+	return f
+}
+
+// objectDir returns the local directory of the object id in root, which
+// must use a local FS.
+func objectDir(t *testing.T, root *ocfl.Root, id string) string {
+	t.Helper()
+	objPath, err := root.ResolveID(id)
+	be.NilErr(t, err)
+	return filepath.Join(root.FS().(*local.FS).Root(), filepath.FromSlash(path.Join(root.Path(), objPath)))
+}
+
+// writeObjectFile writes the file name, with data, in the directory of the
+// object id in root, which must use a local FS.
+func writeObjectFile(t *testing.T, root *ocfl.Root, id, name, data string) {
+	t.Helper()
+	dir := objectDir(t, root, id)
+	be.NilErr(t, os.MkdirAll(dir, 0o755))
+	be.NilErr(t, os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644))
+}
+
+// cancelHandler is a slog.Handler that calls cancel when a record with the
+// message msg is handled.
+type cancelHandler struct {
+	msg    string
+	cancel func()
+}
+
+func (h *cancelHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *cancelHandler) Handle(_ context.Context, r slog.Record) error {
+	if r.Message == h.msg {
+		h.cancel()
+	}
+	return nil
+}
+
+func (h *cancelHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *cancelHandler) WithGroup(string) slog.Handler      { return h }
+
 // testRootLoc is the storage root location used for stages in tests.
 const testRootLoc = "file:///ocfl-root"
 

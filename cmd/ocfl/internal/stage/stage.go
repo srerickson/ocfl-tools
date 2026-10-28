@@ -361,6 +361,129 @@ func (e *UnavailableError) Error() string {
 
 func (e *UnavailableError) Unwrap() error { return ocfl.ErrMissingContent }
 
+// UpstreamState is the state of a stage's object in the storage root,
+// compared with the stage's base: the object's root inventory when the
+// stage was created.
+type UpstreamState int
+
+const (
+	// UpstreamAtBase means the object's root inventory sidecar still
+	// matches the stage's base. For a new object, it means the object
+	// directory is missing or empty for a draft stage, or has no sidecar for
+	// a frozen one. A draft stage can be committed. For a frozen stage, the
+	// commit isn't complete: the object may be partially updated by it, and
+	// the commit can be resumed or reverted.
+	UpstreamAtBase UpstreamState = iota
+
+	// UpstreamCommitted means the commit of a frozen stage is complete: the
+	// object's head is the stage's new version, and resuming the commit
+	// removes the stage file. It is never the state of a draft stage.
+	UpstreamCommitted
+
+	// UpstreamChanged means the object was changed by something else since
+	// the stage was created: a version was committed, or the object was
+	// created or deleted. A draft stage can't be committed, and a frozen
+	// stage's commit can't be resumed or reverted.
+	UpstreamChanged
+)
+
+// Upstream is the result of [Stage.CheckUpstream].
+type Upstream struct {
+	State UpstreamState
+
+	// Exists reports whether the object exists in the storage root: it has
+	// a root inventory sidecar, or its object directory isn't empty. It is
+	// only meaningful if State is UpstreamChanged; for the other states, the
+	// state itself says what the object is.
+	Exists bool
+
+	// Head is the object's head version, as read from the storage root. It
+	// is set only if State is UpstreamCommitted (the stage's new version) or
+	// UpstreamChanged and the object's inventory could be read. Otherwise
+	// it is the zero value: if State is UpstreamAtBase, the head is the
+	// stage's base, and it isn't read.
+	Head ocfl.VNum
+}
+
+// CheckUpstream compares the object in root, which must be the stage's
+// storage root (see [Stage.Root]), with the stage's base. It uses the root
+// inventory sidecar, as committing the stage does (see [File.Commit] and
+// [File.Resume]), so the stage's own partial commit isn't mistaken for a
+// change, and an object that commit would accept isn't reported. A stale
+// stage is not an error: it is UpstreamChanged. CheckUpstream returns an
+// error if the object can't be checked: storage can't be read, the root
+// has no layout, the sidecar is malformed, or ctx is canceled. The result
+// is a snapshot. The object isn't locked and may change before the stage
+// is committed.
+func (s *Stage) CheckUpstream(ctx context.Context, root *ocfl.Root) (Upstream, error) {
+	if root == nil {
+		panic("stage.Stage.CheckUpstream: nil root")
+	}
+	if err := ctx.Err(); err != nil {
+		return Upstream{}, err
+	}
+	objPath, err := root.ResolveID(s.ID())
+	if err != nil {
+		return Upstream{}, err
+	}
+	dir := path.Join(root.Path(), objPath)
+	sidecar, err := ocfl.ReadInventorySidecar(ctx, root.FS(), dir, s.DigestAlgorithm().ID())
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			return Upstream{}, err
+		}
+		sidecar = ""
+	}
+	base := s.update.BaseInventoryDigest()
+	if next := s.update.NewInventoryDigest(); s.Frozen() && next != "" && strings.EqualFold(sidecar, next) {
+		return Upstream{State: UpstreamCommitted, Exists: true, Head: s.NextHead()}, nil
+	}
+	if base != "" && strings.EqualFold(sidecar, base) {
+		return Upstream{State: UpstreamAtBase, Exists: true}, nil
+	}
+	// listed is set when the object directory has been listed, and dirFull
+	// is true if it isn't missing or empty
+	var listed, dirFull bool
+	listDir := func() error {
+		entries, err := ocflfs.ReadDir(ctx, root.FS(), dir)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("reading object directory: %w", err)
+		}
+		listed, dirFull = true, len(entries) > 0
+		return nil
+	}
+	if base == "" && sidecar == "" {
+		if err := listDir(); err != nil {
+			return Upstream{}, err
+		}
+		// For a frozen stage, the object directory may have the stage's own
+		// partial writes.
+		if s.Frozen() || !dirFull {
+			return Upstream{State: UpstreamAtBase, Exists: dirFull}, nil
+		}
+	}
+	up := Upstream{State: UpstreamChanged, Exists: sidecar != ""}
+	if !up.Exists {
+		if !listed {
+			if err := listDir(); err != nil {
+				return Upstream{}, err
+			}
+		}
+		up.Exists = dirFull
+	}
+	if up.Exists {
+		// The state is known, so an error reading the head is dropped.
+		obj, err := root.NewObject(ctx, s.ID())
+		switch {
+		case ctx.Err() != nil:
+			return Upstream{}, ctx.Err()
+		case err == nil && obj.Exists():
+			up.Head = obj.Head()
+		}
+	}
+	return up, nil
+}
+
 // MarshalJSON implements [json.Marshaler] for *Stage.
 func (s *Stage) MarshalJSON() ([]byte, error) {
 	s.prune()
