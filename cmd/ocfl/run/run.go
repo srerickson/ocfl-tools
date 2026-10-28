@@ -238,8 +238,28 @@ func (env *cmdEnv) localFS(dir string) (*local.FS, error) {
 	return fsys, nil
 }
 
+// getRoot returns the storage root named by --root or $OCFL_ROOT.
 func (env *cmdEnv) getRoot(ctx context.Context) (*ocfl.Root, error) {
-	fsys, dir, err := env.parseLocation(ctx, env.rootLocation)
+	return env.openRoot(ctx, env.rootLocation)
+}
+
+// getRootLocation returns the storage root named by --root or $OCFL_ROOT and
+// its location string, which is saved in stage files.
+func (env *cmdEnv) getRootLocation(ctx context.Context) (*ocfl.Root, string, error) {
+	root, err := env.getRoot(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	loc, err := fsconfig.FSConfig{FS: root.FS(), Path: root.Path()}.MarshalText()
+	if err != nil {
+		return nil, "", fmt.Errorf("storage root location: %w", err)
+	}
+	return root, string(loc), nil
+}
+
+// openRoot returns the storage root at the location loc.
+func (env *cmdEnv) openRoot(ctx context.Context, loc string) (*ocfl.Root, error) {
+	fsys, dir, err := env.parseLocation(ctx, loc)
 	if err != nil {
 		return nil, err
 	}

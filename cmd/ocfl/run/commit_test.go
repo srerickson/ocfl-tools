@@ -48,7 +48,7 @@ func TestCommit(t *testing.T) {
 		files := stageFiles(t)
 		be.Equal(t, 1, len(files))
 		be.In(t, "commit of "+id+" (v1) was interrupted", stderrOut)
-		be.In(t, "to resume: ocfl --root "+env["OCFL_ROOT"]+" stage commit -f "+files[0]+" --resume\n", stderrOut)
+		be.In(t, "to resume: ocfl stage commit -f "+files[0]+" --resume\n", stderrOut)
 		be.In(t, "stage commit -f "+files[0]+" --revert", stderrOut)
 		// resume
 		runOK(t, env, "stage", "commit", "-f", files[0], "--resume")

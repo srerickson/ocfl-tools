@@ -180,6 +180,22 @@ manually update the `config.json` before using the storage root.
 The command `ocfl info` will report errors if the storage root's layout
 configuration is invalid.
 
+### Stages
+
+A stage records changes to an object to be committed together as a new object
+version. Stage files store draft version state and *references* to local files
+with new content (not the content itself):
+
+```sh
+ocfl stage new -f my-stage.json --root /mnt/data/my-root --id ark://abc/123
+ocfl stage add -f my-stage.json my-files/
+ocfl stage status -f my-stage.json
+ocfl stage commit -f my-stage.json -m "update data" -n "My Name" -e me@example.net
+```
+
+The stage records its storage root, so `--root` is only used with
+`ocfl stage new`.
+
 ### Changes to staged files
 
 Staged content isn't copied until the stage is committed, so the stage file
