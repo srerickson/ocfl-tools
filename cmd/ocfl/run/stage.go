@@ -164,7 +164,7 @@ func (cmd *StageCmd) loadDraft(env *cmdEnv, kctx *kong.Context) (*stage.File, st
 	}
 	if f.Stage().Frozen() {
 		err := fmt.Errorf("the stage can't be changed: %w", inProgressError(f.Stage(), ref))
-		closeStage(f, ref, &err)
+		closeStage(env, f, ref, "", &err)
 		return nil, stageRef{}, err
 	}
 	return f, ref, nil
@@ -216,7 +216,7 @@ func (cmd *NewStageCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, 
 	if err != nil {
 		return err
 	}
-	defer closeStage(f, ref, &err)
+	defer closeStage(env, f, ref, "", &err)
 	if ref.shortID == "" {
 		env.logger.Info("stage file created", "path", ref.path, "object_id", s.ID(), "object_version", s.NextHead())
 		return nil
@@ -240,7 +240,7 @@ func (cmd *StageAddCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCmd, 
 	if err != nil {
 		return err
 	}
-	defer closeStage(f, ref, &err)
+	defer closeStage(env, f, ref, "", &err)
 	s := f.Stage()
 	absPath, err := filepath.Abs(cmd.Path)
 	if err != nil {
@@ -300,7 +300,11 @@ func (cmd *StageCommitCmd) Run(ctx context.Context, env *cmdEnv, parent *StageCm
 	if err != nil {
 		return err
 	}
-	defer closeStage(f, ref, &err)
+	done := "the commit is complete"
+	if cmd.Revert {
+		done = ""
+	}
+	defer closeStage(env, f, ref, done, &err)
 	s := f.Stage()
 	root, err := env.openRoot(ctx, s.Root())
 	if err != nil {
@@ -415,7 +419,7 @@ func (cmd *StageDeleteCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context
 	if err != nil {
 		return err
 	}
-	defer closeStage(f, ref, &err)
+	defer closeStage(env, f, ref, "the stage was deleted", &err)
 	s := f.Stage()
 	if cmd.Force {
 		err = f.Discard()
@@ -521,7 +525,7 @@ func (cmd *StageRmCmd) Run(env *cmdEnv, parent *StageCmd, kctx *kong.Context) (e
 	if err != nil {
 		return err
 	}
-	defer closeStage(f, ref, &err)
+	defer closeStage(env, f, ref, "", &err)
 	if err := f.Stage().Remove(cmd.Path, cmd.Recursive, env.logger); err != nil {
 		return err
 	}
@@ -976,8 +980,23 @@ func staleDraftGuidance(ref stageRef) []string {
 // closeStage closes the stage file f, which ref names, releasing its lock,
 // and joins any error to *err, with what to do about it. It's deferred by
 // commands that lock a stage file.
-func closeStage(f *stage.File, ref stageRef, err *error) {
-	*err = errors.Join(*err, lockError(f.Close(), ref))
+//
+// done describes the command's work if it's finished when the stage file is
+// gone, such as a commit, or it's empty. If the command succeeded, the stage
+// file is gone, and its lock was removed by another command (see
+// [stage.RemoveLock]), closeStage logs a warning instead of returning an
+// error: the stage file was removed while the command held the lock, so
+// there's nothing for another command to have changed.
+func closeStage(env *cmdEnv, f *stage.File, ref stageRef, done string, err *error) {
+	closeErr := f.Close()
+	if done != "" && *err == nil && errors.Is(closeErr, stage.ErrLockBroken) {
+		if _, statErr := os.Lstat(ref.path); errors.Is(statErr, fs.ErrNotExist) {
+			env.logger.Warn(done+", but another command cleared the stage's lock while this one held it",
+				"path", ref.path, "error", closeErr)
+			return
+		}
+	}
+	*err = errors.Join(*err, lockError(closeErr, ref))
 }
 
 // checkWritable returns an error if root's storage can't be written, so a
