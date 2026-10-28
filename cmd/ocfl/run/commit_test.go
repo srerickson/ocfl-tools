@@ -190,6 +190,29 @@ func TestCommit(t *testing.T) {
 		be.False(t, strings.Contains(runOK(t, env, "log", "--id", id), "second commit"))
 	})
 
+	// The commit's lock is removed before the object is updated: the commit
+	// stops without changing the object, and keeps the stage.
+	t.Run("lock removed before the object is updated", func(t *testing.T) {
+		const id = "object-10"
+		var short string
+		clearLock := func() {
+			ids := stageIDs(t, stageCache)
+			be.Equal(t, 1, len(ids))
+			short = ids[0][:7]
+			runOK(t, env, "stage", "delete", "-s", short, "--lock")
+		}
+		testutil.RunCLIOnLog(context.Background(), commitArgs(id, "first commit"), env, "starting object update", clearLock, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, stage.ErrLockBroken))
+			be.In(t, "commit of "+id+" (v1) stopped: ", stderr)
+			be.In(t, "this command didn't change the object", stderr)
+			be.Equal(t, 1, strings.Count(stderr, "check it with: ocfl stage status -s "+short+"\n"))
+		})
+		noLocks(t, stageCache)
+		runOK(t, env, "stage", "commit", "-s", short, "--resume")
+		be.Equal(t, 0, len(stageIDs(t, stageCache)))
+		be.Equal(t, "", runOK(t, env, "validate", "--id", id))
+	})
+
 	// Another command creates the stage while the commit adds files, so the
 	// commit can't create it, and the commit's lock can't be released. This
 	// subtest sets the process's umask: TestCommit isn't parallel.

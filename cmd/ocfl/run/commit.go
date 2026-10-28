@@ -85,6 +85,10 @@ func (cmd *CommitCmd) Run(ctx context.Context, env *cmdEnv, kctx *kong.Context) 
 		return draftNotSavedError(s, ref, notSaved)
 	case s.Frozen():
 		return commitError(root, s, ref, err)
+	case errors.Is(err, stage.ErrLockBroken):
+		// the stage file can't be removed either: another command may be
+		// using it
+		return lockError(err, ref)
 	}
 	// Nothing was written to the object, and the stage was only for this
 	// commit: it's removed, so the command can be run again.
