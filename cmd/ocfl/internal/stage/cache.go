@@ -69,18 +69,9 @@ func (c Cache) Find(prefix string) (string, error) {
 // killed before it created the stage file, so that the lock can be removed
 // with [RemoveLock].
 func (c Cache) FindLock(prefix string) (string, error) {
-	ids, err := c.ids()
+	ids, err := c.lockStageIDs()
 	if err != nil {
 		return "", err
-	}
-	locks, err := c.lockIDs()
-	if err != nil {
-		return "", err
-	}
-	for _, id := range locks {
-		if !slices.Contains(ids, id) {
-			ids = append(ids, id)
-		}
 	}
 	return c.find(prefix, ids)
 }
@@ -89,6 +80,17 @@ func (c Cache) FindLock(prefix string) (string, error) {
 // characters, that doesn't start the ID of any other stage file in c.
 func (c Cache) ShortID(id string) (string, error) {
 	ids, err := c.ids()
+	if err != nil {
+		return "", err
+	}
+	return shortID(id, ids), nil
+}
+
+// ShortLockID is like [Cache.ShortID], but the prefix also doesn't start the
+// ID of any stage in c that has a lock file but no stage file, so that
+// [Cache.FindLock] finds the stage with it.
+func (c Cache) ShortLockID(id string) (string, error) {
+	ids, err := c.lockStageIDs()
 	if err != nil {
 		return "", err
 	}
@@ -148,6 +150,25 @@ func (c Cache) idsWithSuffix(suffix string) ([]string, error) {
 	for _, e := range entries {
 		id, ok := strings.CutSuffix(e.Name(), suffix)
 		if ok && e.Type().IsRegular() && validID(id) {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
+// lockStageIDs returns the IDs of the stages in c that have a stage file or a
+// lock file.
+func (c Cache) lockStageIDs() ([]string, error) {
+	ids, err := c.ids()
+	if err != nil {
+		return nil, err
+	}
+	locks, err := c.lockIDs()
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range locks {
+		if !slices.Contains(ids, id) {
 			ids = append(ids, id)
 		}
 	}
