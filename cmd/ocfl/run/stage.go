@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -812,9 +813,24 @@ func lockedError(err error, ref stageRef) error {
 }
 
 // clearLockCommand returns the command line that clears the lock on r's stage
-// file.
+// file. If the stage file is in the stage cache, the short stage ID in it is
+// one that 'stage delete --lock' finds: unique among the stages with stage
+// files or lock files.
 func (r stageRef) clearLockCommand() string {
-	return r.command("delete", "--lock")
+	if r.id == "" || r.shortID == "" {
+		return r.command("delete", "--lock")
+	}
+	short := r.id
+	for n := len(r.shortID); n < len(r.id); n++ {
+		if got, err := r.cache.FindLock(r.id[:n]); err == nil && got == r.id {
+			short = r.id[:n]
+			break
+		}
+	}
+	lockRef := r
+	lockRef.flags = slices.Clone(r.flags)
+	lockRef.flags[len(lockRef.flags)-1] = short // the flags end with -s and the short ID
+	return lockRef.command("delete", "--lock")
 }
 
 // inProgressError returns an error saying that the commit of the frozen

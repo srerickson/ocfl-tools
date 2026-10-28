@@ -843,6 +843,31 @@ func TestStage_DeleteLock(t *testing.T) {
 		noLocks(t, stageCache)
 	})
 
+	// the stage ID in the command to clear a lock is unique among stages
+	// with stage files or lock files
+	t.Run("short ID with a lock-only stage", func(t *testing.T) {
+		full := strings.TrimSuffix(filepath.Base(stagePath), ".json")
+		// another stage, with only a lock file, whose ID shares the short ID
+		c := "a"
+		if full[7] == 'a' {
+			c = "b"
+		}
+		otherLock := filepath.Join(stageCache, full[:7]+c+strings.Repeat("a", len(full)-8)+".json.lock")
+		be.NilErr(t, os.WriteFile(otherLock, []byte("pid 2 on other-host\n"), 0o644))
+		defer os.Remove(otherLock)
+		be.NilErr(t, os.WriteFile(lockPath, []byte("pid 1 on other-host\n"), 0o644))
+		clear := "ocfl stage delete -s " + full[:8] + " --lock"
+		testutil.RunCLI([]string{"stage", "add", "-s", id, contentDir}, env, func(err error, stdout, stderr string) {
+			be.True(t, errors.Is(err, stage.ErrLocked))
+			be.In(t, "clear the lock: "+clear+"\n", stderr)
+		})
+		out := runOK(t, env, strings.Fields(clear)[1:]...)
+		be.Equal(t, "removed lock file "+lockPath+" (held by pid 1 on other-host)\n", out)
+		// the other stage's lock is kept
+		_, err := os.Stat(otherLock)
+		be.NilErr(t, err)
+	})
+
 	t.Run("flags", func(t *testing.T) {
 		be.NilErr(t, os.WriteFile(lockPath, []byte("pid 1 on other-host\n"), 0o644))
 		defer os.Remove(lockPath)
