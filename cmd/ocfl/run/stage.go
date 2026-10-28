@@ -79,7 +79,12 @@ seconds, and mode.
 If a commit is interrupted, the stage is kept. Run 'stage commit --resume'
 to finish the commit, or 'stage commit --revert' to undo the partial update
 and return the stage to its uncommitted state. 'stage delete' deletes a
-stage that hasn't been committed.`
+stage that hasn't been committed.
+
+Commands that change a stage lock its stage file with a lock file (the stage
+file's name with '.lock' appended) while they run, so only one of them can
+change it at a time. If a command is killed, the lock file may be left
+behind: if no other ocfl command is using the stage, remove it.`
 }
 
 // ref returns the stage file named by --stage or --file. It returns an error
