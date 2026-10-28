@@ -75,7 +75,7 @@ func (cmd *CommitCmd) Run(ctx context.Context, env *cmdEnv, kctx *kong.Context) 
 	if err != nil {
 		return fmt.Errorf("saving the stage file before commit: %w", err)
 	}
-	defer closeStage(f, &err)
+	defer closeStage(f, ref, &err)
 	err = f.Commit(ctx, root, cmd.Message, newUser(cmd.Name, cmd.Email), env.logger)
 	var notSaved *stage.DraftNotSavedError
 	switch {

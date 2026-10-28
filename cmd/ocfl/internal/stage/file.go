@@ -31,10 +31,20 @@ var (
 	ErrNotRemoved = errors.New("the commit is complete, but the stage file couldn't be removed")
 
 	// ErrLocked is returned when a stage file can't be locked because it's
-	// locked by another command: its lock file exists. The lock file is
-	// [LockPath] of the stage file. If the command that held the lock was
-	// killed, the lock file is left behind: remove it with [RemoveLock].
+	// locked by another command: its lock file, the stage file's name with
+	// ".lock" appended, exists. If the command that held the lock was killed,
+	// the lock file is left behind: remove it with [RemoveLock].
 	ErrLocked = errors.New("the stage file is locked by another command")
+
+	// ErrLockBroken is returned by [File.Close] when the stage file's lock was
+	// removed (see [RemoveLock]) while f held it: another command may have
+	// changed the stage file.
+	ErrLockBroken = errors.New("the stage file's lock was removed while the command held it")
+
+	// ErrNotUnlocked is returned by [File.Close] when the stage file's lock
+	// file couldn't be removed: the stage file stays locked until it's removed
+	// with [RemoveLock].
+	ErrNotUnlocked = errors.New("the stage file's lock couldn't be released")
 )
 
 // errNotLocked is returned by the methods that change the stage file when the
@@ -84,8 +94,8 @@ func (e *DraftNotSavedError) Unwrap() []error { return []error{e.Err, e.SaveErr}
 type File struct {
 	path  string
 	stage *Stage
-	saved []byte // the stage file's contents when it was last read or written
-	lock  string // the lock file, if f holds the lock
+	saved []byte    // the stage file's contents when it was last read or written
+	lock  *heldLock // the lock, if f holds it
 }
 
 // Open reads the stage file name without locking it. The File can be read and
@@ -106,7 +116,7 @@ func OpenLocked(name string) (*File, error) {
 	}
 	f, err := read(name)
 	if err != nil {
-		return nil, errors.Join(err, unlockFile(lock))
+		return nil, errors.Join(err, lock.release())
 	}
 	f.lock = lock
 	return f, nil
@@ -144,41 +154,52 @@ func Create(name string, s *Stage) (*File, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, errors.Join(err, unlockFile(lock))
+		return nil, errors.Join(err, lock.release())
 	}
 	return &File{path: name, stage: s, saved: b, lock: lock}, nil
 }
 
-// LockPath returns the name of the lock file of the stage file name: name
-// with ".lock" appended.
-func LockPath(name string) string { return name + ".lock" }
+// LockInfo describes a stage file's lock file, as removed by [RemoveLock].
+type LockInfo struct {
+	// Path is the lock file: the stage file's name with ".lock" appended.
+	Path string
+
+	// Holder is what the lock file records about the command that held the
+	// lock (its process ID, host, and when it took the lock), or "" if it
+	// couldn't be read.
+	Holder string
+}
 
 // RemoveLock removes the lock file of the stage file name, releasing the lock
 // even if another command holds it. It's for clearing a lock left behind by a
-// command that was killed: removing the lock of a command that's still running
-// lets another command change the stage file at the same time. RemoveLock
-// returns what the lock file recorded about the command that held the lock,
-// or "" if it couldn't be read. If there's no lock file, it returns an error
-// wrapping [fs.ErrNotExist]. Nothing else is removed: if the lock file isn't
-// a regular file, RemoveLock returns an error without removing it. The stage
-// file isn't read or changed, and doesn't need to exist.
-func RemoveLock(name string) (holder string, err error) {
-	lock := LockPath(name)
-	info, err := os.Lstat(lock)
+// command that was killed. Removing the lock of a command that's still
+// running breaks it: another command can lock and change the stage file at
+// the same time. The broken holder's [File.Close] doesn't remove the new
+// holder's lock, and returns an error wrapping [ErrLockBroken], but nothing
+// prevents its changes to the stage file before then, such as [File.Save].
+//
+// RemoveLock returns the lock file's path and what it recorded. If there's no
+// lock file, it returns an error wrapping [fs.ErrNotExist], with the path.
+// Nothing else is removed: if the lock file isn't a regular file, RemoveLock
+// returns an error without removing it. The stage file isn't read or changed,
+// and doesn't need to exist.
+func RemoveLock(name string) (LockInfo, error) {
+	info := LockInfo{Path: lockPath(name)}
+	stat, err := os.Lstat(info.Path)
 	if err != nil {
-		return "", err
+		return info, err
 	}
-	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("can't remove the stage file lock: %s isn't a regular file", lock)
+	if !stat.Mode().IsRegular() {
+		return info, fmt.Errorf("can't remove the stage file lock: %s isn't a regular file", info.Path)
 	}
-	if b, err := os.ReadFile(lock); err == nil {
-		holder = string(bytes.TrimSpace(b))
+	if b, err := os.ReadFile(info.Path); err == nil {
+		info.Holder = lockHolder(b)
 	}
-	if err := removeLockFile(lock); err != nil {
-		return "", fmt.Errorf("removing the stage file lock: %w", err)
+	if err := removeLockFile(info.Path); err != nil {
+		return info, fmt.Errorf("removing the stage file lock: %w", err)
 	}
-	syncDir(filepath.Dir(lock))
-	return holder, nil
+	syncDir(filepath.Dir(info.Path))
+	return info, nil
 }
 
 // Path returns the path of the stage file.
@@ -189,19 +210,26 @@ func (f *File) Stage() *Stage { return f.stage }
 
 // Close releases the stage file's lock, if f holds it. After Close, f can't
 // change the stage file. Calling Close again does nothing.
+//
+// Close removes the lock file only if it's still the one f created. If it was
+// removed while f held the lock (see [RemoveLock]), Close removes nothing,
+// not even a lock file created since by another command, and returns an
+// error wrapping [ErrLockBroken]: another command may have changed the stage
+// file. If the lock file can't be removed, Close returns an error wrapping
+// [ErrNotUnlocked], and the stage file stays locked.
 func (f *File) Close() error {
-	if f.lock == "" {
+	if f.lock == nil {
 		return nil
 	}
 	lock := f.lock
-	f.lock = ""
-	return unlockFile(lock)
+	f.lock = nil
+	return lock.release()
 }
 
 // Save saves the stage in the file. The file is replaced atomically, so an
 // interrupted Save leaves the previous stage file in place.
 func (f *File) Save() error {
-	if f.lock == "" {
+	if f.lock == nil {
 		return errNotLocked
 	}
 	b, err := write(f.path, f.stage, func(tmp string) error { return os.Rename(tmp, f.path) })
@@ -275,7 +303,7 @@ func (f *File) Commit(ctx context.Context, root *ocfl.Root, msg string, user ocf
 	if root == nil {
 		panic("stage.File.Commit: nil root")
 	}
-	if f.lock == "" {
+	if f.lock == nil {
 		return errNotLocked
 	}
 	s := f.stage
@@ -321,7 +349,7 @@ func (f *File) Resume(ctx context.Context, root *ocfl.Root, logger *slog.Logger)
 	if root == nil {
 		panic("stage.File.Resume: nil root")
 	}
-	if f.lock == "" {
+	if f.lock == nil {
 		return errNotLocked
 	}
 	if !f.stage.Frozen() {
@@ -363,7 +391,7 @@ func (f *File) Revert(ctx context.Context, root *ocfl.Root, logger *slog.Logger)
 	if root == nil {
 		panic("stage.File.Revert: nil root")
 	}
-	if f.lock == "" {
+	if f.lock == nil {
 		return errNotLocked
 	}
 	s := f.stage
@@ -415,7 +443,7 @@ func (f *File) saveUnfrozen() error {
 
 // remove removes the stage file and syncs its directory.
 func (f *File) remove() error {
-	if f.lock == "" {
+	if f.lock == nil {
 		return errNotLocked
 	}
 	if err := os.Remove(f.path); err != nil {
@@ -431,7 +459,7 @@ func (f *File) remove() error {
 // error wrapping errChanged. If the file is locked, it returns an error
 // wrapping ErrLocked.
 func (f *File) saveRefreshed() (err error) {
-	if f.lock != "" {
+	if f.lock != nil {
 		return f.Save()
 	}
 	lock, busy, err := tryLock(f.path)
@@ -489,72 +517,114 @@ const (
 	lockRetry = 50 * time.Millisecond
 )
 
-// lockFile locks the stage file name, waiting up to lockWait if it's locked,
-// and returns the lock file's name. If it's still locked, it returns an error
-// wrapping ErrLocked, which says what the lock file records. The lock file
-// is only read then, so waiting doesn't keep it open while its holder
-// removes it.
-func lockFile(name string) (string, error) {
+// heldLock is a stage file lock held by this process: the lock file it
+// created, and the contents it wrote, which identify it. Each lock file
+// records a random token, so a lock file created by another command after this
+// one was removed doesn't have the same contents, even if it has the same
+// holder and time, or reuses the removed file's inode.
+type heldLock struct {
+	path     string
+	contents []byte
+}
+
+// release releases the lock by removing its lock file, if it's still the one
+// that l created. Otherwise, it returns an error wrapping ErrLockBroken. If
+// the lock file can't be removed, it returns an error wrapping
+// ErrNotUnlocked.
+func (l *heldLock) release() error {
+	b, err := os.ReadFile(l.path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("%w: %s was removed", ErrLockBroken, l.path)
+	case err != nil:
+		return fmt.Errorf("%w: %w", ErrNotUnlocked, err)
+	case !bytes.Equal(b, l.contents):
+		return fmt.Errorf("%w: %s was removed, and another command (%s) has locked the stage file since",
+			ErrLockBroken, l.path, lockHolder(b))
+	}
+	if err := removeLockFile(l.path); err != nil {
+		return fmt.Errorf("%w: %w", ErrNotUnlocked, err)
+	}
+	return nil
+}
+
+// lockPath returns the name of the lock file of the stage file name.
+func lockPath(name string) string { return name + ".lock" }
+
+// lockHolder returns what the contents b of a lock file record about the
+// command that holds the lock: its first line. It's "" if there's nothing.
+func lockHolder(b []byte) string {
+	line, _, _ := bytes.Cut(b, []byte("\n"))
+	return string(bytes.TrimSpace(line))
+}
+
+// lockFile locks the stage file name, waiting up to lockWait if it's locked.
+// If it's still locked, it returns an error wrapping ErrLocked, which says
+// what the lock file records. The lock file is only read then, so waiting
+// doesn't keep it open while its holder removes it. If it was removed just
+// before it's read, lockFile tries once more to lock the stage file.
+func lockFile(name string) (*heldLock, error) {
 	deadline := time.Now().Add(lockWait)
+	retried := false
 	for {
 		lock, busy, err := tryLock(name)
 		if !busy {
 			return lock, err
 		}
 		if time.Now().After(deadline) {
-			return "", lockedError(LockPath(name), err)
+			path := lockPath(name)
+			b, readErr := os.ReadFile(path)
+			if errors.Is(readErr, fs.ErrNotExist) && !retried {
+				retried = true
+				continue
+			}
+			return nil, lockedError(path, b, readErr, err)
 		}
 		time.Sleep(lockRetry)
 	}
 }
 
 // tryLock tries once to lock the stage file name by creating its lock file,
-// which records the process that holds the lock, and returns the lock file's
-// name. If another command holds the lock, or is releasing it, tryLock
-// returns busy, with the error from creating the lock file.
-func tryLock(name string) (lock string, busy bool, err error) {
-	lock = LockPath(name)
-	f, err := os.OpenFile(lock, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+// which records the process that holds the lock and a random token. If
+// another command holds the lock, or is releasing it, tryLock returns busy,
+// with the error from creating the lock file.
+func tryLock(name string) (lock *heldLock, busy bool, err error) {
+	path := lockPath(name)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		if lockBusy(err) {
-			return "", true, err
+			return nil, true, err
 		}
-		return "", false, fmt.Errorf("locking the stage file: %w", err)
+		return nil, false, fmt.Errorf("locking the stage file: %w", err)
 	}
 	host, _ := os.Hostname()
-	_, err = fmt.Fprintf(f, "pid %d on %s, since %s\n", os.Getpid(), host, time.Now().Format(time.RFC3339))
+	contents := fmt.Appendf(nil, "pid %d on %s, since %s\n%s\n",
+		os.Getpid(), host, time.Now().Format(time.RFC3339), rand.Text())
+	_, err = f.Write(contents)
 	if closeErr := f.Close(); err == nil {
 		err = closeErr
 	}
 	if err != nil {
-		os.Remove(lock)
-		return "", false, fmt.Errorf("locking the stage file: %w", err)
+		os.Remove(path)
+		return nil, false, fmt.Errorf("locking the stage file: %w", err)
 	}
-	return lock, false, nil
+	return &heldLock{path: path, contents: contents}, false, nil
 }
 
 // lockedError returns the error for the stage file lock lock, which couldn't
-// be created because of err: an error wrapping ErrLocked, which names the lock
-// file and says what it records. If the lock file doesn't exist, the lock
-// wasn't held by another command, and lockedError returns err.
-func lockedError(lock string, err error) error {
-	b, readErr := os.ReadFile(lock)
+// be created because of err, given the result of reading it, b and readErr:
+// an error wrapping ErrLocked, which names the lock file and says what it
+// records. If the lock file doesn't exist, the lock wasn't held by another
+// command, and lockedError returns err.
+func lockedError(lock string, b []byte, readErr, err error) error {
 	if errors.Is(readErr, fs.ErrNotExist) && !errors.Is(err, fs.ErrExist) {
 		return fmt.Errorf("locking the stage file: %w", err)
 	}
 	owner := "unknown process"
-	if readErr == nil && len(bytes.TrimSpace(b)) > 0 {
-		owner = string(bytes.TrimSpace(b))
+	if readErr == nil && lockHolder(b) != "" {
+		owner = lockHolder(b)
 	}
 	return fmt.Errorf("%w (%s): %s exists", ErrLocked, owner, lock)
-}
-
-// unlockFile releases a stage file's lock by removing its lock file, lock.
-func unlockFile(lock string) error {
-	if err := removeLockFile(lock); err != nil {
-		return fmt.Errorf("unlocking the stage file: %w; if no other ocfl command is using the stage, remove the lock file %s", err, lock)
-	}
-	return nil
 }
 
 // removeLockFile removes the lock file lock. If it's open in another
