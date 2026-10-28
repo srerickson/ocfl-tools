@@ -59,10 +59,12 @@ homebrew_casks:
         brew uninstall --formula ocfl && brew link --overwrite --cask ocfl
     # The darwin binaries are only ad-hoc signed, so Gatekeeper kills
     # them (SIGKILL) when they carry the quarantine attribute applied to
-    # downloaded files. Strip it after staging.
+    # downloaded files. Strip it after staging. Homebrew requires the
+    # declarative install steps DSL here (GoReleaser >= v2.19); failure
+    # is allowed so installs without the attribute still succeed.
     hooks:
       post:
-        install: |
-          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/ocfl"]
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/ocfl"], must_succeed: false
           end
