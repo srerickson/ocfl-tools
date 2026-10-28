@@ -315,10 +315,12 @@ func (f *File) Discard() error { return f.remove() }
 // was frozen when Commit was called, it returns [ErrFrozen].
 //
 // Commit checks that f still holds the lock before it saves the frozen stage,
-// and before it removes the stage file. If the lock was removed (see
-// [RemoveLock]) before the stage was saved, Commit returns an error wrapping
-// [ErrLockBroken] without changing the stage file or the object. If it was
-// removed while the object was updated, the commit is complete, but the stage
+// before it updates the object, and before it removes the stage file. If the
+// lock was removed (see [RemoveLock]) before the stage was saved, Commit
+// returns an error wrapping [ErrLockBroken] without changing the stage file or
+// the object. If it was removed before the object was updated, the error
+// wraps ErrLockBroken, and the stage is frozen, but the object isn't changed.
+// If it was removed while the object was updated, the commit is complete, but the stage
 // file isn't removed: the error wraps [ErrNotRemoved] and [ErrLockBroken].
 // Progress is logged to logger, which may be nil.
 func (f *File) Commit(ctx context.Context, root *ocfl.Root, msg string, user ocfl.User, logger *slog.Logger) error {
@@ -367,10 +369,11 @@ func (f *File) Commit(ctx context.Context, root *ocfl.Root, msg string, user ocf
 // the error wraps [ocfl.ErrUpdateConflict], the object was changed by
 // something else after the commit was interrupted, and the commit can't be
 // resumed or reverted. If the stage file's lock was removed while f held it
-// (see [RemoveLock]), Resume returns an error wrapping [ErrLockBroken]
-// without changing the object; if it's removed while the object is updated,
-// the error wraps [ErrNotRemoved] too (see [File.Commit]). Progress is logged
-// to logger, which may be nil.
+// (see [RemoveLock]) before the object is updated, Resume returns an error
+// wrapping [ErrLockBroken] without changing the object: it checks the lock
+// again after checking the staged files. If the lock is removed while the
+// object is updated, the error wraps [ErrNotRemoved] too (see [File.Commit]).
+// Progress is logged to logger, which may be nil.
 func (f *File) Resume(ctx context.Context, root *ocfl.Root, logger *slog.Logger) error {
 	if root == nil {
 		panic("stage.File.Resume: nil root")
@@ -445,6 +448,10 @@ func (f *File) apply(ctx context.Context, root *ocfl.Root, content ocfl.ContentS
 	s := f.stage
 	logger = loggerOrDiscard(logger)
 	logger.Info("starting object update", "object_id", s.ID(), "object_version", s.NextHead())
+	// checking the staged files may have taken a while
+	if err := f.checkLock(); err != nil {
+		return err
+	}
 	if _, err := root.Apply(ctx, s.update, content, ocfl.ApplyWithLogger(logger)); err != nil {
 		return err
 	}
