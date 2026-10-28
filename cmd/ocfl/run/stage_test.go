@@ -566,14 +566,25 @@ func TestStage_StatusLocked(t *testing.T) {
 	runOK(t, env, "init-root", "--layout", "0003-hash-and-id-n-tuple-storage-layout")
 	runOK(t, env, "stage", "new", "-f", stagePath, "--id", "object-01")
 	runOK(t, env, "stage", "add", "-f", stagePath, contentDir)
-	// a staged file's stat changes, so status refreshes it
+	// without a lock, status doesn't warn about one
+	testutil.RunCLI([]string{"stage", "status", "-f", stagePath}, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+		be.False(t, strings.Contains(stderr, "locked"))
+	})
+	noLocks(t, filepath.Dir(stagePath))
+	// a staged file's stat changes, so status refreshes it, but the stage
+	// is locked: status warns, with how to clear the lock, and it doesn't
+	// save the refreshed stats
 	mtime := time.Now().Add(-time.Hour)
 	be.NilErr(t, os.Chtimes(filepath.Join(contentDir, "hello.csv"), mtime, mtime))
 	before, err := os.ReadFile(stagePath)
 	be.NilErr(t, err)
 	be.NilErr(t, os.WriteFile(lockPath, []byte("pid 1 on other-host\n"), 0o644))
-	out := runOK(t, env, "stage", "status", "-f", stagePath)
-	be.In(t, "stage has changes to commit", out)
+	testutil.RunCLI([]string{"stage", "status", "-f", stagePath}, env, func(err error, stdout, stderr string) {
+		be.NilErr(t, err)
+		be.In(t, "stage has changes to commit", stdout)
+		be.In(t, "the stage is locked by pid 1 on other-host; if no other ocfl command is using the stage, clear the lock: ocfl stage delete -f "+stagePath+" --lock", stderr)
+	})
 	after, err := os.ReadFile(stagePath)
 	be.NilErr(t, err)
 	be.Equal(t, string(before), string(after))
