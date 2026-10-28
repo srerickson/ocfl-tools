@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -92,6 +93,47 @@ func TestStage_AddDir(t *testing.T) {
 			be.NilErr(t, s.AddDir(ctx, contentFixture, nil, stage.AddAndRemove()))
 			stageStateMatchesDir(t, s, contentFixture, true, ".")
 			stageHasContent(t, s)
+		})
+
+		t.Run("with remove without hidden", func(t *testing.T) {
+			dir := writeFiles(t, map[string]string{
+				"a.txt":   "a",
+				".hidden": "h",
+				".gone":   "g",
+			})
+			be.NilErr(t, os.Mkdir(filepath.Join(dir, ".dir"), 0o755))
+			be.NilErr(t, os.WriteFile(filepath.Join(dir, ".dir", "x.txt"), []byte("x"), 0o644))
+			// missing from dir, but not under 'as' unless it is "."
+			otherDir := writeFiles(t, map[string]string{".gone": "o"})
+			for _, as := range []string{".", "sub"} {
+				t.Run("as "+as, func(t *testing.T) {
+					s := newStage(t, root, newID)
+					be.NilErr(t, s.AddDir(ctx, dir, nil, stage.AddAs(as)))
+					// a staged file that isn't under 'as' isn't removed
+					be.NilErr(t, s.AddFile(ctx, filepath.Join(otherDir, ".gone"), nil, stage.AddAs("other/.gone")))
+					be.NilErr(t, os.Remove(filepath.Join(dir, ".gone")))
+					be.NilErr(t, os.Remove(filepath.Join(dir, "a.txt")))
+					be.NilErr(t, os.WriteFile(filepath.Join(dir, "b.txt"), []byte("b"), 0o644))
+					t.Cleanup(func() {
+						be.NilErr(t, os.WriteFile(filepath.Join(dir, ".gone"), []byte("g"), 0o644))
+						be.NilErr(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644))
+						be.NilErr(t, os.Remove(filepath.Join(dir, "b.txt")))
+					})
+					be.NilErr(t, s.AddDir(ctx, dir, nil, stage.AddAs(as), stage.AddAndRemove(), stage.AddWithoutHidden()))
+					// hidden files that still exist are kept; missing files
+					// are removed, hidden or not
+					var want []string
+					for _, p := range []string{".dir/x.txt", ".hidden", "b.txt"} {
+						want = append(want, path.Join(as, p))
+					}
+					if as != "." {
+						want = append(want, "other/.gone")
+					}
+					slices.Sort(want)
+					be.Equal(t, strings.Join(want, "\n")+"\n", list(s))
+					stageHasContent(t, s)
+				})
+			}
 		})
 
 		t.Run("with as", func(t *testing.T) {

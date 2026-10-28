@@ -13,10 +13,12 @@ import (
 	"io/fs"
 	"log/slog"
 	"maps"
+	"os"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
@@ -128,8 +130,13 @@ func (s *Stage) AddDir(ctx context.Context, dir string, logger *slog.Logger, opt
 	if conf.remove {
 		// Remove files before adding to get rid of potential conflicting
 		// paths. Files in the stage under 'as' that aren't in dir aren't
-		// added back. They're removed from a copy of the update, so s is
+		// added back, except hidden files that were skipped but still
+		// exist. They're removed from a copy of the update, so s is
 		// unchanged if adding fails.
+		kept, err := s.skippedFiles(dir, names, conf)
+		if err != nil {
+			return err
+		}
 		if u, err = s.cloneUpdate(); err != nil {
 			return err
 		}
@@ -140,6 +147,9 @@ func (s *Stage) AddDir(ctx context.Context, dir string, logger *slog.Logger, opt
 			err = u.Remove(conf.as)
 		}
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		if err := u.AddAll(kept); err != nil {
 			return err
 		}
 	}
@@ -444,8 +454,10 @@ func AddAs(name string) AddOption {
 
 // AddAndRemove is an option for [Stage.AddDir] to also remove files in the
 // stage that aren't included in the source directory. If used with [AddAs],
-// only files under the directory named with [AddAs] are removed. This option
-// is ignored if used with [Stage.AddFile].
+// only files under the directory named with [AddAs] are removed. If used with
+// [AddWithoutHidden], staged hidden files that still exist in the source
+// directory aren't removed. This option is ignored if used with
+// [Stage.AddFile].
 func AddAndRemove() AddOption {
 	return func(c *addConfig) {
 		c.remove = true
@@ -519,6 +531,44 @@ func (s *Stage) check(ctx context.Context, dir string, names []string, gos int) 
 		errs = append(errs[:maxFileErrors], more)
 	}
 	return entries, errors.Join(errs...)
+}
+
+// skippedFiles returns entries for the files in the stage under conf.as that
+// AddDir with the remove option keeps: files that weren't listed in dir
+// because they are hidden and conf.noHidden is set, but that still exist in
+// dir. names are the files listed in dir.
+func (s *Stage) skippedFiles(dir string, names []string, conf *addConfig) ([]ocfl.UpdateEntry, error) {
+	if !conf.noHidden {
+		return nil, nil
+	}
+	listed := make(map[string]bool, len(names))
+	for _, name := range names {
+		listed[name] = true
+	}
+	var kept []ocfl.UpdateEntry
+	for p, dig := range s.update.NewState().PathMap().SortedPaths() {
+		name := p
+		if conf.as != "." {
+			var ok bool
+			if name, ok = strings.CutPrefix(p, conf.as+"/"); !ok {
+				continue
+			}
+		}
+		if listed[name] || !isHidden(name) {
+			continue
+		}
+		info, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(name)))
+		switch {
+		case errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR):
+			continue
+		case err != nil:
+			return nil, err
+		case info.IsDir():
+			continue
+		}
+		kept = append(kept, ocfl.UpdateEntry{Name: p, Digest: dig})
+	}
+	return kept, nil
 }
 
 // add adds files with the entries to u, which is s's update or a changed
@@ -681,6 +731,17 @@ func listFiles(ctx context.Context, dir string, noHidden bool) ([]string, error)
 		return nil, err
 	}
 	return names, nil
+}
+
+// isHidden returns true if any element of the slash-separated path name
+// starts with ".", so it is skipped by listFiles with noHidden.
+func isHidden(name string) bool {
+	for elem := range strings.SplitSeq(name, "/") {
+		if strings.HasPrefix(elem, ".") {
+			return true
+		}
+	}
+	return false
 }
 
 // logChanges logs files that were added, updated or removed between the
