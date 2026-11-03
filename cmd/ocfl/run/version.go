@@ -8,8 +8,8 @@ import (
 
 var (
 	// ocfl-tools version
-	Version   = "0.4.3" // may be set by -ldflags
-	BuildTime string    // always set by -ldflags
+	Version   = "0.5.0-preview" // may be set by -ldflags
+	BuildTime string            // always set by -ldflags
 )
 
 type VersionCmd struct{}
