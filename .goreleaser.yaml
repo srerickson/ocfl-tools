@@ -14,6 +14,10 @@ builds:
       - linux_amd64_v1
       - linux_arm64
       - windows_amd64_v1
+      # Build both darwin arches: with only darwin_arm64, GoReleaser
+      # (<= v2.20) puts `depends_on arch:` before sha256/url in the cask,
+      # which fails `brew style` (Cask/StanzaOrder).
+      - darwin_amd64_v1
       - darwin_arm64
 
     ldflags:
